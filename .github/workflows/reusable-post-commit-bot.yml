@@ -1,0 +1,131 @@
+name: Reusable Post-Commit Bot Template
+
+on:
+  workflow_call:
+    inputs:
+      job_name:
+        description: 'Name of the CI job'
+        required: true
+        type: string
+      projects:
+        description: 'LLVM projects to enable in CMake (e.g., libc;compiler-rt)'
+        required: true
+        type: string
+      cmake_extra_args:
+        description: 'Extra CMake configuration arguments'
+        required: false
+        type: string
+        default: ''
+      build_targets:
+        description: 'Targets to build with Ninja'
+        required: false
+        type: string
+        default: ''
+      test_target:
+        description: 'Test target to execute (e.g., check-libc)'
+        required: false
+        type: string
+        default: ''
+      cache_key:
+        description: 'ccache key prefix'
+        required: true
+        type: string
+      run_coverage_post_process:
+        description: 'Whether to run llvm-profdata and llvm-cov export/show'
+        required: false
+        type: boolean
+        default: false
+      coverage_binary_path:
+        description: 'Binary or library archive path for llvm-cov reporting'
+        required: false
+        type: string
+        default: 'build/projects/libc/libllvm-libc.a'
+
+jobs:
+  build-and-test:
+    name: ${{ inputs.job_name }}
+    runs-on: ubuntu-24.04
+    container:
+      image: 'ghcr.io/llvm/ci-ubuntu-24.04:latest@sha256:571cfd8a5ec38a9f241b421c56aa821139c0fd9dcbde5f6161210884befb5ec4'
+    env:
+      LLVM_VERSION: 19
+    steps:
+      - name: Free Disk Space
+        run: |
+          rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc || true
+
+      - name: Checkout Source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@33522472633dbd32578e909b315f5ee43ba878ce # v1.2.22
+        with:
+          max-size: 2G
+          key: ${{ inputs.cache_key }}
+          variant: sccache
+
+      - name: Configure CMake
+        run: |
+          cmake -B build -S llvm -G Ninja \
+            -DLLVM_ENABLE_ASSERTIONS=ON \
+            -DLLVM_ENABLE_PROJECTS="${{ inputs.projects }}" \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=sccache \
+            -DCMAKE_C_COMPILER_LAUNCHER=sccache \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DCMAKE_BUILD_TYPE=Release \
+            ${{ inputs.cmake_extra_args }}
+
+      - name: Build Targets
+        if: ${{ inputs.build_targets != '' }}
+        run: |
+          ninja -v -C build ${{ inputs.build_targets }}
+
+      - name: Run Tests
+        if: ${{ inputs.test_target != '' }}
+        run: |
+          ninja -v -C build ${{ inputs.test_target }}
+
+      - name: Build Profiling Tools (if coverage enabled)
+        if: ${{ inputs.run_coverage_post_process }}
+        run: |
+          ninja -v -C build llvm-profdata llvm-cov
+
+      - name: Merge Profile Data (if coverage enabled)
+        if: ${{ inputs.run_coverage_post_process }}
+        run: |
+          mkdir -p build/coverage-results
+          shopt -s globstar nullglob
+          profraw_files=(build/**/*.profraw)
+          if [ ${#profraw_files[@]} -eq 0 ]; then
+            echo "WARNING: No .profraw files generated across build subdirectories! Skipping profile merge."
+            exit 0
+          fi
+          PROFDATA=$(command -v ./build/bin/llvm-profdata || command -v llvm-profdata-19 || command -v llvm-profdata)
+          $PROFDATA merge -sparse "${profraw_files[@]}" -o build/coverage-results/merged.profdata
+
+      - name: Export Coverage JSON and HTML Report (with MC/DC)
+        if: ${{ inputs.run_coverage_post_process && inputs.coverage_binary_path != '' }}
+        run: |
+          if [ ! -f build/coverage-results/merged.profdata ]; then
+            echo "WARNING: No merged.profdata found! Skipping export."
+            exit 0
+          fi
+          COV=$(command -v ./build/bin/llvm-cov || command -v llvm-cov-19 || command -v llvm-cov)
+          $COV export ${{ inputs.coverage_binary_path }} \
+            -instr-profile=build/coverage-results/merged.profdata \
+            -format=json > build/coverage-results/coverage_data.json
+
+          $COV show ${{ inputs.coverage_binary_path }} \
+            -instr-profile=build/coverage-results/merged.profdata \
+            --show-mcdc -format=html -output-dir=build/coverage-results/html
+
+      - name: Upload Build & Coverage Results
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: ${{ inputs.cache_key }}-results
+          path: 'build/coverage-results/*'

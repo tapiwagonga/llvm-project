@@ -1,0 +1,50 @@
+name: Post-Commit Code Coverage & MC/DC (Libc)
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches:
+      - 'main'
+      - 'release/**'
+    paths:
+      - 'libc/**'
+      - 'llvm/**'
+      - '.github/workflows/ci-post-commit-coverage.yml'
+      - '.github/workflows/reusable-post-commit-bot.yml'
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+    paths:
+      - 'libc/**'
+      - '.github/workflows/ci-post-commit-coverage.yml'
+      - '.github/workflows/reusable-post-commit-bot.yml'
+  schedule:
+    - cron: '0 2 * * *'
+
+concurrency:
+  group: >-
+    llvm-project-${{ github.workflow }}-${{ github.event_name == 'pull_request' &&
+      ( github.event.pull_request.number || github.ref) }}
+  cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
+
+jobs:
+  libc-coverage-mcdc:
+    if: >-
+      github.repository_owner == 'llvm' &&
+      github.event.action != 'closed'
+    uses: ./.github/workflows/reusable-post-commit-bot.yml
+    with:
+      job_name: 'Libc Coverage & MC/DC Analyzer'
+      projects: 'libc;compiler-rt'
+      cache_key: 'post-commit-libc-coverage'
+      cmake_extra_args: >-
+        -DLLVM_BUILD_INSTRUMENTED=IR
+        -DCMAKE_CXX_FLAGS="-fprofile-instr-generate -fcoverage-mapping -fcoverage-mcdc -O0 -g"
+        -DCMAKE_C_FLAGS="-fprofile-instr-generate -fcoverage-mapping -fcoverage-mcdc -O0 -g"
+      test_target: 'check-libc'
+      run_coverage_post_process: true
+      coverage_binary_path: 'build/projects/libc/libllvm-libc.a'
