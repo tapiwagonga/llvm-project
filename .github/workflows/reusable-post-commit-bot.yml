@@ -30,20 +30,26 @@ on:
         description: 'ccache key prefix'
         required: true
         type: string
-      run_coverage_post_process:
-        description: 'Whether to run llvm-profdata and llvm-cov export/show'
-        required: false
-        type: boolean
-        default: false
-      coverage_binary_path:
-        description: 'Binary or library archive path for llvm-cov reporting'
+      post_test_hook:
+        description: 'Path to a shell script to run after tests complete'
         required: false
         type: string
-        default: 'build/projects/libc/libllvm-libc.a'
+        default: ''
+      artifacts_to_upload:
+        description: 'Multiline string of file paths to upload as an artifact'
+        required: false
+        type: string
+        default: ''
+    outputs:
+      payload-artifact-name:
+        description: 'Name of the generated payload artifact'
+        value: ${{ jobs.build-and-test.outputs.artifact-name }}
 
 jobs:
   build-and-test:
     name: ${{ inputs.job_name }}
+    outputs:
+      artifact-name: ${{ steps.set-output.outputs.artifact_name }}
     runs-on: ubuntu-24.04
     container:
       image: 'ghcr.io/llvm/ci-ubuntu-24.04:latest@sha256:571cfd8a5ec38a9f241b421c56aa821139c0fd9dcbde5f6161210884befb5ec4'
@@ -94,38 +100,19 @@ jobs:
         run: |
           ninja -v -C build llvm-profdata llvm-cov
 
-      - name: Merge Profile Data (if coverage enabled)
-        if: ${{ inputs.run_coverage_post_process }}
-        run: |
-          mkdir -p build/coverage-results
-          shopt -s globstar nullglob
-          profraw_files=(build/**/*.profraw)
-          if [ ${#profraw_files[@]} -eq 0 ]; then
-            echo "WARNING: No .profraw files generated across build subdirectories! Skipping profile merge."
-            exit 0
-          fi
-          PROFDATA=$(command -v ./build/bin/llvm-profdata || command -v llvm-profdata-19 || command -v llvm-profdata)
-          $PROFDATA merge -sparse "${profraw_files[@]}" -o build/coverage-results/merged.profdata
+      - name: Run Post-Test Hook
+        if: ${{ inputs.post_test_hook != '' }}
+        run: bash ${{ inputs.post_test_hook }}
 
-      - name: Export Coverage JSON and HTML Report (with MC/DC)
-        if: ${{ inputs.run_coverage_post_process && inputs.coverage_binary_path != '' }}
-        run: |
-          if [ ! -f build/coverage-results/merged.profdata ]; then
-            echo "WARNING: No merged.profdata found! Skipping export."
-            exit 0
-          fi
-          COV=$(command -v ./build/bin/llvm-cov || command -v llvm-cov-19 || command -v llvm-cov)
-          $COV export ${{ inputs.coverage_binary_path }} \
-            -instr-profile=build/coverage-results/merged.profdata \
-            -format=json > build/coverage-results/coverage_data.json
+      - name: Set Artifact Output
+        id: set-output
+        if: ${{ inputs.artifacts_to_upload != '' }}
+        run: echo "artifact_name=${{ inputs.cache_key }}-payload" >> $GITHUB_OUTPUT
 
-          $COV show ${{ inputs.coverage_binary_path }} \
-            -instr-profile=build/coverage-results/merged.profdata \
-            --show-mcdc -format=html -output-dir=build/coverage-results/html
-
-      - name: Upload Build & Coverage Results
+      - name: Upload Artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: always()
+        if: ${{ inputs.artifacts_to_upload != '' }}
         with:
-          name: ${{ inputs.cache_key }}-results
-          path: 'build/coverage-results/*'
+          name: ${{ inputs.cache_key }}-payload
+          path: ${{ inputs.artifacts_to_upload }}
+          retention-days: 3

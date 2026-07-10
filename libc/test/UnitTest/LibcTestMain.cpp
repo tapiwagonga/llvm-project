@@ -46,11 +46,19 @@ TestOptions parseOptions(int argc, char **argv) {
 #if defined(__linux__)
 #include "src/__support/OSUtil/syscall.h"
 #include <fcntl.h>
+#include <sys/mman.h>
 #include <sys/syscall.h>
+#include <time.h>
 
 extern "C" {
   __attribute__((weak)) uint64_t __llvm_profile_get_size_for_buffer(void);
   __attribute__((weak)) int __llvm_profile_write_buffer(char *Buffer);
+  
+  // Override compiler-rt's weak filename symbol.
+  // This redirects the default atexit() dumper to /dev/null. We must silence
+  // the default dumper because it relies on libc stdio (fopen/fwrite), which
+  // creates a circular dependency when testing the C library itself.
+  char __llvm_profile_filename[] = "/dev/null";
 }
 
 namespace {
@@ -62,57 +70,89 @@ void dump_freestanding_coverage() {
   if (required_size == 0)
     return;
 
-  // Use a static buffer to avoid heap allocation (malloc) in freestanding mode.
-  static char profile_buffer[1024 * 1024];
-  if (required_size > sizeof(profile_buffer)) {
-    const char *msg = "WARNING: LLVM profile buffer exceeded 1MB static limit!\n";
-    LIBC_NAMESPACE::syscall_impl<long>(SYS_write, 2 /* stderr */, msg, 56);
-    return; // Buffer overflow safety check.
-  }
+  // We use mmap to dynamically allocate the exact required size. This completely
+  // bypasses the need for heap allocation (malloc), making this extraction
+  // safely decoupled for hermetic tests and avoids static buffer size limits
+  // which are easily exceeded by MC/DC coverage profiles.
+#ifdef SYS_mmap
+  long mmap_syscall = SYS_mmap;
+#elif defined(SYS_mmap2)
+  long mmap_syscall = SYS_mmap2;
+#else
+#error "System does not support SYS_mmap or SYS_mmap2."
+#endif
+  long mmap_ret = LIBC_NAMESPACE::syscall_impl<long>(
+      mmap_syscall, nullptr, required_size, PROT_READ | PROT_WRITE,
+      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 
-  if (__llvm_profile_write_buffer(profile_buffer) != 0)
+  // mmap returns -errno on failure in Linux syscalls, which is between -1 and -4095
+  if (mmap_ret < 0 && mmap_ret > -4096) {
+    const char *msg = "FATAL: Failed to mmap buffer for LLVM profile data!\n";
+    LIBC_NAMESPACE::syscall_impl<long>(SYS_write, 2 /* stderr */, msg, 52);
+    __builtin_trap();
+  }
+  char *profile_buffer = reinterpret_cast<char *>(mmap_ret);
+
+  if (__llvm_profile_write_buffer(profile_buffer) != 0) {
+    LIBC_NAMESPACE::syscall_impl<long>(SYS_munmap, profile_buffer, required_size);
     return;
-
-  // Format filename as default_<pid>.profraw to prevent multi-process race conditions.
-  char filename[64] = "default_";
-  int idx = 8;
-  long pid = LIBC_NAMESPACE::syscall_impl<long>(SYS_getpid);
-  if (pid <= 0)
-    pid = 1;
-  char pid_str[32];
-  int pid_len = 0;
-  long temp_pid = pid;
-  while (temp_pid > 0) {
-    pid_str[pid_len++] = (char)('0' + (temp_pid % 10));
-    temp_pid /= 10;
-  }
-  if (pid_len == 0)
-    pid_str[pid_len++] = '0';
-  for (int i = pid_len - 1; i >= 0; --i)
-    filename[idx++] = pid_str[i];
-  const char *suffix = ".profraw";
-  for (int i = 0; suffix[i] != '\0'; ++i)
-    filename[idx++] = suffix[i];
-  filename[idx] = '\0';
-
-  // Dump directly to disk via raw OS syscalls, bypassing libc stdio entirely.
-  long fd = LIBC_NAMESPACE::syscall_impl<long>(
-      SYS_openat, AT_FDCWD, filename, O_WRONLY | O_CREAT | O_TRUNC,
-      0644);
-  if (fd < 0)
-    return;
-
-  uint64_t bytes_written = 0;
-  while (bytes_written < required_size) {
-    long ret = LIBC_NAMESPACE::syscall_impl<long>(
-        SYS_write, fd, profile_buffer + bytes_written,
-        required_size - bytes_written);
-    if (ret <= 0)
-      break;
-    bytes_written += ret;
   }
 
-  LIBC_NAMESPACE::syscall_impl<long>(SYS_close, fd);
+  // We write directly to stdout (fd 1).
+  long fd = 1;
+
+  const char start_marker[] = "\n[LLVM_COV_START]\n";
+  LIBC_NAMESPACE::syscall_impl<long>(SYS_write, fd, start_marker, sizeof(start_marker) - 1);
+
+  const char b64_chars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  char chunk_buf[4096];
+  size_t chunk_idx = 0;
+
+  for (uint64_t i = 0; i < required_size; i += 3) {
+    uint32_t val = 0;
+    // Endian-agnostic byte-by-byte shifting
+    val |= (uint8_t)profile_buffer[i] << 16;
+    if (i + 1 < required_size)
+      val |= (uint8_t)profile_buffer[i + 1] << 8;
+    if (i + 2 < required_size)
+      val |= (uint8_t)profile_buffer[i + 2];
+
+    chunk_buf[chunk_idx++] = b64_chars[(val >> 18) & 0x3F];
+    chunk_buf[chunk_idx++] = b64_chars[(val >> 12) & 0x3F];
+    
+    if (i + 1 < required_size)
+      chunk_buf[chunk_idx++] = b64_chars[(val >> 6) & 0x3F];
+    else
+      chunk_buf[chunk_idx++] = '=';
+
+    if (i + 2 < required_size)
+      chunk_buf[chunk_idx++] = b64_chars[val & 0x3F];
+    else
+      chunk_buf[chunk_idx++] = '=';
+
+    // Flush chunk if full or if it's the last bytes
+    if (chunk_idx + 4 >= sizeof(chunk_buf) || i + 3 >= required_size) {
+      size_t bytes_written = 0;
+      while (bytes_written < chunk_idx) {
+        long ret = LIBC_NAMESPACE::syscall_impl<long>(
+            SYS_write, fd, chunk_buf + bytes_written, chunk_idx - bytes_written);
+        if (ret < 0) {
+          if (ret == -4) // -EINTR on Linux
+            continue;
+          break; // Fatal error (e.g. -EPIPE), abort writing to prevent infinite loop
+        }
+        if (ret == 0)
+          break;
+        bytes_written += ret;
+      }
+      chunk_idx = 0;
+    }
+  }
+
+  const char end_marker[] = "\n[LLVM_COV_END]\n";
+  LIBC_NAMESPACE::syscall_impl<long>(SYS_write, fd, end_marker, sizeof(end_marker) - 1);
+    
+  LIBC_NAMESPACE::syscall_impl<long>(SYS_munmap, profile_buffer, required_size);
 }
 } // anonymous namespace
 #else

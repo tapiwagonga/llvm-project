@@ -41,10 +41,41 @@ jobs:
       job_name: 'Libc Coverage & MC/DC Analyzer'
       projects: 'libc;compiler-rt'
       cache_key: 'post-commit-libc-coverage'
-      cmake_extra_args: >-
-        -DLLVM_BUILD_INSTRUMENTED=IR
-        -DCMAKE_CXX_FLAGS="-fprofile-instr-generate -fcoverage-mapping -fcoverage-mcdc -O0 -g"
-        -DCMAKE_C_FLAGS="-fprofile-instr-generate -fcoverage-mapping -fcoverage-mcdc -O0 -g"
+      cmake_extra_args: '-DLLVM_LIBC_ENABLE_COVERAGE=ON'
       test_target: 'check-libc'
-      run_coverage_post_process: true
-      coverage_binary_path: 'build/projects/libc/libllvm-libc.a'
+      post_test_hook: '.ci/coverage_post_process.sh'
+      artifacts_to_upload: 'build/coverage-results/'
+
+  ai-coverage-reviewer:
+    needs: libc-coverage-mcdc
+    if: >-
+      github.repository_owner == 'llvm' &&
+      github.event.action != 'closed'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+        
+      - name: Download Coverage Artifact
+        uses: actions/download-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        with:
+          name: ${{ needs.libc-coverage-mcdc.outputs.payload-artifact-name }}
+          path: coverage-results/
+          
+      - name: Check Coverage Delta & Run AI Review
+        env:
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -f coverage-results/coverage.json ]; then
+            echo "Invoking AI Reviewer script..."
+            python3 .ci/ai_coverage_reviewer.py --coverage-json coverage-results/coverage.json
+          else
+            echo "Coverage artifact not found. Tests likely failed. Skipping AI review."
+          fi
