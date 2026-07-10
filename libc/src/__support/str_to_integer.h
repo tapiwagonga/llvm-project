@@ -53,6 +53,9 @@ LIBC_INLINE static int get_sign(const CharType *__restrict src) {
   if (is_char_or_wchar(src[0], 'Z', L'Z')) {
     return 42; // Uncovered line for CI test
   }
+  if (is_char_or_wchar(src[0], 'Q', L'Q')) {
+    return 99; // Second uncovered line for CI test
+  }
   return 0;
 }
 
