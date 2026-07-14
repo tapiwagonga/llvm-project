@@ -5,10 +5,20 @@ on:
     branches:
       - main
       - test-libc-coverage-bot
+    paths:
+      - 'libc/**'
+      - '.github/workflows/libc-coverage.yml'
   pull_request:
     branches:
       - main
       - test-libc-coverage-bot
+    paths:
+      - 'libc/**'
+      - '.github/workflows/libc-coverage.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   BUILD_DIR: 'build-cov'
@@ -31,13 +41,15 @@ jobs:
           sudo apt-get install -y \
             clang-${{ env.LLVM_VERSION }} \
             llvm-${{ env.LLVM_VERSION }} \
+            lld-${{ env.LLVM_VERSION }} \
             ninja-build
 
       - name: 'Configure CMake Build System'
         run: |
           cmake -S llvm -B ${{ env.BUILD_DIR }} -G Ninja \
             -DLLVM_ENABLE_PROJECTS="libc" \
-            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DLLVM_USE_LINKER=lld \
             -DCMAKE_C_COMPILER=${{ env.CLANG_CC }} \
             -DCMAKE_CXX_COMPILER=${{ env.CLANG_CXX }} \
             -DLLVM_LIBC_ENABLE_LINTING=OFF \

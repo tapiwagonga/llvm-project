@@ -73,6 +73,16 @@ def main():
         cov_cmd.extend(["-object", tb])
     cov_cmd.extend(["-instr-profile", merged_profdata])
     
+    # Calculate the absolute path to the libc directory
+    libc_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    
+    # Restrict the coverage report strictly to core source directories
+    cov_cmd.extend([
+        os.path.join(libc_dir, "src"),
+        os.path.join(libc_dir, "include"),
+        os.path.join(libc_dir, "hdr")
+    ])
+    
     print("Generating coverage report...")
     subprocess.check_call(cov_cmd)
     
