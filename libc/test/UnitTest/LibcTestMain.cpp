@@ -51,29 +51,25 @@ TestOptions parseOptions(int argc, char **argv) {
 #include <time.h>
 
 extern "C" {
-  __attribute__((weak)) uint64_t __llvm_profile_get_size_for_buffer(void);
-  __attribute__((weak)) int __llvm_profile_write_buffer(char *Buffer);
-  
-  // Override compiler-rt's weak filename symbol.
-  // This redirects the default atexit() dumper to /dev/null. We must silence
-  // the default dumper because it relies on libc stdio (fopen/fwrite), which
-  // creates a circular dependency when testing the C library itself.
-  char __llvm_profile_filename[] = "/dev/null";
+__attribute__((weak)) uint64_t __llvm_profile_get_size_for_buffer(void);
+__attribute__((weak)) int __llvm_profile_write_buffer(char *Buffer);
+__attribute__((weak)) void __llvm_profile_set_filename(const char *FilenamePat);
+
+// Override compiler-rt's weak filename symbol. This redirects the default
+// filename to /dev/null to silence the default dumper by default.
+char __llvm_profile_filename[] = "/dev/null";
 }
 
 namespace {
-void dump_freestanding_coverage() {
+void write_raw_profile() {
   if (!__llvm_profile_get_size_for_buffer || !__llvm_profile_write_buffer)
-    return; // Code coverage is not enabled in this build.
+    return;
 
   uint64_t required_size = __llvm_profile_get_size_for_buffer();
   if (required_size == 0)
     return;
 
-  // We use mmap to dynamically allocate the exact required size. This completely
-  // bypasses the need for heap allocation (malloc), making this extraction
-  // safely decoupled for hermetic tests and avoids static buffer size limits
-  // which are easily exceeded by MC/DC coverage profiles.
+  // Allocate buffer via mmap to avoid depending on libc malloc.
 #ifdef SYS_mmap
   long mmap_syscall = SYS_mmap;
 #elif defined(SYS_mmap2)
@@ -85,84 +81,132 @@ void dump_freestanding_coverage() {
       mmap_syscall, nullptr, required_size, PROT_READ | PROT_WRITE,
       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 
-  // mmap returns -errno on failure in Linux syscalls, which is between -1 and -4095
-  if (mmap_ret < 0 && mmap_ret > -4096) {
-    const char *msg = "FATAL: Failed to mmap buffer for LLVM profile data!\n";
-    LIBC_NAMESPACE::syscall_impl<long>(SYS_write, 2 /* stderr */, msg, 52);
-    __builtin_trap();
-  }
+  if (mmap_ret < 0 && mmap_ret > -4096)
+    return;
   char *profile_buffer = reinterpret_cast<char *>(mmap_ret);
 
   if (__llvm_profile_write_buffer(profile_buffer) != 0) {
+    LIBC_NAMESPACE::syscall_impl<long>(SYS_munmap, profile_buffer,
+                                       required_size);
+    return;
+  }
+
+  char filename[256];
+  int idx = 0;
+  bool has_env_file = false;
+
+    long pid = LIBC_NAMESPACE::syscall_impl<long>(SYS_getpid);
+    if (pid <= 0)
+      pid = 1;
+
+    char pid_str[32];
+    int pid_len = 0;
+    long temp_pid = pid;
+    while (temp_pid > 0) {
+      pid_str[pid_len++] = (char)('0' + (temp_pid % 10));
+      temp_pid /= 10;
+    }
+    if (pid_len == 0)
+      pid_str[pid_len++] = '0';
+
+    // Parse LLVM_PROFILE_FILE environment variable manually.
+    if (LIBC_NAMESPACE::testing::envp) {
+      for (char **env = LIBC_NAMESPACE::testing::envp; *env != nullptr; ++env) {
+        const char *str = *env;
+        const char *prefix = "LLVM_PROFILE_FILE=";
+        int i = 0;
+        while (prefix[i] != '\0' && str[i] == prefix[i])
+          i++;
+        if (prefix[i] == '\0') {
+          const char *val = &str[i];
+          int val_idx = 0;
+          while (val[val_idx] != '\0' && idx < 200) {
+            if (val[val_idx] == '%' && val[val_idx + 1] == 'm') {
+              for (int j = pid_len - 1; j >= 0; --j)
+                filename[idx++] = pid_str[j];
+              val_idx += 2;
+            } else {
+              filename[idx++] = val[val_idx++];
+            }
+          }
+          filename[idx] = '\0';
+          has_env_file = true;
+          break;
+        }
+      }
+    }
+
+    // Fallback to a unique filename if no environment variable is set.
+    if (!has_env_file) {
+      const char *default_prefix = "default_";
+      for (int i = 0; default_prefix[i] != '\0'; ++i)
+        filename[idx++] = default_prefix[i];
+
+      for (int i = pid_len - 1; i >= 0; --i)
+        filename[idx++] = pid_str[i];
+
+      filename[idx++] = '_';
+
+    struct timespec ts;
+    LIBC_NAMESPACE::syscall_impl<long>(SYS_clock_gettime, CLOCK_MONOTONIC, &ts);
+    long temp_nsec = ts.tv_nsec;
+    if (temp_nsec < 0)
+      temp_nsec = -temp_nsec;
+
+    char nsec_str[32];
+    int nsec_len = 0;
+    while (temp_nsec > 0) {
+      nsec_str[nsec_len++] = (char)('0' + (temp_nsec % 10));
+      temp_nsec /= 10;
+    }
+    if (nsec_len == 0)
+      nsec_str[nsec_len++] = '0';
+    for (int i = nsec_len - 1; i >= 0; --i)
+      filename[idx++] = nsec_str[i];
+
+    const char *suffix = ".profraw";
+    for (int i = 0; suffix[i] != '\0'; ++i)
+      filename[idx++] = suffix[i];
+    filename[idx] = '\0';
+  }
+
+  // Write profile data using raw OS syscalls to bypass libc I/O functions.
+  long fd = LIBC_NAMESPACE::syscall_impl<long>(
+      SYS_openat, AT_FDCWD, filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+  if (fd < 0) {
     LIBC_NAMESPACE::syscall_impl<long>(SYS_munmap, profile_buffer, required_size);
     return;
   }
 
-  // We write directly to stdout (fd 1).
-  long fd = 1;
-
-  const char start_marker[] = "\n[LLVM_COV_START]\n";
-  LIBC_NAMESPACE::syscall_impl<long>(SYS_write, fd, start_marker, sizeof(start_marker) - 1);
-
-  const char b64_chars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-  char chunk_buf[4096];
-  size_t chunk_idx = 0;
-
-  for (uint64_t i = 0; i < required_size; i += 3) {
-    uint32_t val = 0;
-    // Endian-agnostic byte-by-byte shifting
-    val |= (uint8_t)profile_buffer[i] << 16;
-    if (i + 1 < required_size)
-      val |= (uint8_t)profile_buffer[i + 1] << 8;
-    if (i + 2 < required_size)
-      val |= (uint8_t)profile_buffer[i + 2];
-
-    chunk_buf[chunk_idx++] = b64_chars[(val >> 18) & 0x3F];
-    chunk_buf[chunk_idx++] = b64_chars[(val >> 12) & 0x3F];
-    
-    if (i + 1 < required_size)
-      chunk_buf[chunk_idx++] = b64_chars[(val >> 6) & 0x3F];
-    else
-      chunk_buf[chunk_idx++] = '=';
-
-    if (i + 2 < required_size)
-      chunk_buf[chunk_idx++] = b64_chars[val & 0x3F];
-    else
-      chunk_buf[chunk_idx++] = '=';
-
-    // Flush chunk if full or if it's the last bytes
-    if (chunk_idx + 4 >= sizeof(chunk_buf) || i + 3 >= required_size) {
-      size_t bytes_written = 0;
-      while (bytes_written < chunk_idx) {
-        long ret = LIBC_NAMESPACE::syscall_impl<long>(
-            SYS_write, fd, chunk_buf + bytes_written, chunk_idx - bytes_written);
-        if (ret < 0) {
-          if (ret == -4) // -EINTR on Linux
-            continue;
-          break; // Fatal error (e.g. -EPIPE), abort writing to prevent infinite loop
-        }
-        if (ret == 0)
-          break;
-        bytes_written += ret;
-      }
-      chunk_idx = 0;
+  uint64_t bytes_written = 0;
+  while (bytes_written < required_size) {
+    long ret = LIBC_NAMESPACE::syscall_impl<long>(
+        SYS_write, fd, profile_buffer + bytes_written,
+        required_size - bytes_written);
+    if (ret < 0) {
+      if (ret == -4) // EINTR retry
+        continue;
+      break;
     }
+    if (ret == 0)
+      break;
+    bytes_written += ret;
   }
 
-  const char end_marker[] = "\n[LLVM_COV_END]\n";
-  LIBC_NAMESPACE::syscall_impl<long>(SYS_write, fd, end_marker, sizeof(end_marker) - 1);
-    
+  LIBC_NAMESPACE::syscall_impl<long>(SYS_close, fd);
   LIBC_NAMESPACE::syscall_impl<long>(SYS_munmap, profile_buffer, required_size);
+
+  // Clear the filename pattern to prevent compiler-rt from writing at exit.
+  if (__llvm_profile_set_filename)
+    __llvm_profile_set_filename("/dev/null");
 }
 } // anonymous namespace
 #else
 namespace {
-void dump_freestanding_coverage() {}
+void write_raw_profile() {}
 } // anonymous namespace
 #endif
 
-// The C++ standard forbids declaring the main function with a linkage specifier
-// outisde of 'freestanding' mode, only define the linkage for hermetic tests.
 #if __STDC_HOSTED__
 #define TEST_MAIN int main
 #else
@@ -174,7 +218,9 @@ TEST_MAIN(int argc, char **argv, char **envp) {
   LIBC_NAMESPACE::testing::argv = argv;
   LIBC_NAMESPACE::testing::envp = envp;
 
-  int result = LIBC_NAMESPACE::testing::Test::runTests(parseOptions(argc, argv));
-  dump_freestanding_coverage();
+  int result =
+      LIBC_NAMESPACE::testing::Test::runTests(parseOptions(argc, argv));
+  write_raw_profile();
   return result;
 }
+

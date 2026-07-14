@@ -174,7 +174,7 @@ def main():
         sys.exit(0)
     else:
         print(final_output)
-        print(f"\n[*] Mock Presentation Complete. Detected {len(issues_dict)} function blocks with regressions.")
+        print(f"\n[*] Coverage evaluation complete. Detected {len(issues_dict)} function blocks with regressions.")
         
         # Post the comment directly using GitHub API
         import urllib.request
