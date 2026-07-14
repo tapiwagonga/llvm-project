@@ -30,8 +30,8 @@ def main():
     # 1. Find all profraw files
     profraw_files = glob.glob(os.path.join(profiles_dir, "*.profraw"))
     if not profraw_files:
-        print(f"No .profraw files found in {profiles_dir}. Did tests run with coverage enabled?", file=sys.stderr)
-        return 0
+        print(f"Error: No .profraw files found in {profiles_dir}. Did tests run with coverage enabled?", file=sys.stderr)
+        sys.exit(1)
     
     # 2. Merge profraw files
     # Find llvm-profdata
@@ -58,8 +58,8 @@ def main():
     # Python 3.5+ recursive glob
     test_binaries = glob.glob(os.path.join(test_dir, "**", "*.__build__"), recursive=True)
     if not test_binaries:
-        print(f"No test binaries found in {test_dir}.", file=sys.stderr)
-        return 0
+        print(f"Error: No test binaries found in {test_dir}.", file=sys.stderr)
+        sys.exit(1)
         
     # 4. Generate report
     llvm_cov = "llvm-cov-19"
