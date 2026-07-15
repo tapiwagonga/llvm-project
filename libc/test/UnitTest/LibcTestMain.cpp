@@ -45,6 +45,7 @@ TestOptions parseOptions(int argc, char **argv) {
 
 #if defined(__linux__)
 #include "src/__support/OSUtil/syscall.h"
+#include <errno.h>
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/syscall.h>
@@ -69,7 +70,7 @@ void write_raw_profile() {
   if (required_size == 0)
     return;
 
-  // Allocate buffer via mmap to avoid depending on libc malloc.
+  // Allocate buffer via mmap to avoid depending on libc's malloc.
 #ifdef SYS_mmap
   long mmap_syscall = SYS_mmap;
 #elif defined(SYS_mmap2)
@@ -86,66 +87,69 @@ void write_raw_profile() {
   char *profile_buffer = reinterpret_cast<char *>(mmap_ret);
 
   if (__llvm_profile_write_buffer(profile_buffer) != 0) {
-    LIBC_NAMESPACE::syscall_impl<long>(SYS_munmap, profile_buffer,
-                                       required_size);
+    LIBC_NAMESPACE::syscall_impl<long>(SYS_munmap, profile_buffer, required_size);
     return;
   }
 
-  char filename[256];
-  int idx = 0;
+  constexpr size_t MAX_FILENAME_LEN = 256;
+  char filename[MAX_FILENAME_LEN];
+  size_t idx = 0;
   bool has_env_file = false;
 
-    long pid = LIBC_NAMESPACE::syscall_impl<long>(SYS_getpid);
-    if (pid <= 0)
-      pid = 1;
+  long pid = LIBC_NAMESPACE::syscall_impl<long>(SYS_getpid);
+  if (pid <= 0)
+    pid = 1;
 
-    char pid_str[32];
-    int pid_len = 0;
-    long temp_pid = pid;
-    while (temp_pid > 0) {
-      pid_str[pid_len++] = (char)('0' + (temp_pid % 10));
-      temp_pid /= 10;
-    }
-    if (pid_len == 0)
-      pid_str[pid_len++] = '0';
+  // We manually format the PID and timestamp into strings to avoid depending on
+  // libc's snprintf, which may be the target currently under test.
+  char pid_str[32];
+  int pid_len = 0;
+  long temp_pid = pid;
+  while (temp_pid > 0) {
+    pid_str[pid_len++] = static_cast<char>('0' + (temp_pid % 10));
+    temp_pid /= 10;
+  }
+  if (pid_len == 0)
+    pid_str[pid_len++] = '0';
 
-    // Parse LLVM_PROFILE_FILE environment variable manually.
-    if (LIBC_NAMESPACE::testing::envp) {
-      for (char **env = LIBC_NAMESPACE::testing::envp; *env != nullptr; ++env) {
-        const char *str = *env;
-        const char *prefix = "LLVM_PROFILE_FILE=";
-        int i = 0;
-        while (prefix[i] != '\0' && str[i] == prefix[i])
-          i++;
-        if (prefix[i] == '\0') {
-          const char *val = &str[i];
-          int val_idx = 0;
-          while (val[val_idx] != '\0' && idx < 200) {
-            if (val[val_idx] == '%' && val[val_idx + 1] == 'm') {
-              for (int j = pid_len - 1; j >= 0; --j)
-                filename[idx++] = pid_str[j];
-              val_idx += 2;
-            } else {
-              filename[idx++] = val[val_idx++];
-            }
+  // Parse LLVM_PROFILE_FILE environment variable manually.
+  if (LIBC_NAMESPACE::testing::envp) {
+    for (char **env = LIBC_NAMESPACE::testing::envp; *env != nullptr; ++env) {
+      const char *str = *env;
+      const char *prefix = "LLVM_PROFILE_FILE=";
+      int i = 0;
+      while (prefix[i] != '\0' && str[i] == prefix[i])
+        i++;
+      if (prefix[i] == '\0') {
+        const char *val = &str[i];
+        int val_idx = 0;
+        // Leave room for safety margin during %m expansion
+        while (val[val_idx] != '\0' && idx < (MAX_FILENAME_LEN - 32)) {
+          if (val[val_idx] == '%' && val[val_idx + 1] == 'm') {
+            for (int j = pid_len - 1; j >= 0; --j)
+              filename[idx++] = pid_str[j];
+            val_idx += 2;
+          } else {
+            filename[idx++] = val[val_idx++];
           }
-          filename[idx] = '\0';
-          has_env_file = true;
-          break;
         }
+        filename[idx] = '\0';
+        has_env_file = true;
+        break;
       }
     }
+  }
 
-    // Fallback to a unique filename if no environment variable is set.
-    if (!has_env_file) {
-      const char *default_prefix = "default_";
-      for (int i = 0; default_prefix[i] != '\0'; ++i)
-        filename[idx++] = default_prefix[i];
+  // Fallback to a unique filename if no environment variable is set.
+  if (!has_env_file) {
+    const char *default_prefix = "default_";
+    for (int i = 0; default_prefix[i] != '\0'; ++i)
+      filename[idx++] = default_prefix[i];
 
-      for (int i = pid_len - 1; i >= 0; --i)
-        filename[idx++] = pid_str[i];
+    for (int i = pid_len - 1; i >= 0; --i)
+      filename[idx++] = pid_str[i];
 
-      filename[idx++] = '_';
+    filename[idx++] = '_';
 
     struct timespec ts;
     LIBC_NAMESPACE::syscall_impl<long>(SYS_clock_gettime, CLOCK_MONOTONIC, &ts);
@@ -156,7 +160,7 @@ void write_raw_profile() {
     char nsec_str[32];
     int nsec_len = 0;
     while (temp_nsec > 0) {
-      nsec_str[nsec_len++] = (char)('0' + (temp_nsec % 10));
+      nsec_str[nsec_len++] = static_cast<char>('0' + (temp_nsec % 10));
       temp_nsec /= 10;
     }
     if (nsec_len == 0)
@@ -180,11 +184,11 @@ void write_raw_profile() {
 
   uint64_t bytes_written = 0;
   while (bytes_written < required_size) {
-    long ret = LIBC_NAMESPACE::syscall_impl<long>(
-        SYS_write, fd, profile_buffer + bytes_written,
-        required_size - bytes_written);
+    long ret = LIBC_NAMESPACE::syscall_impl<long>(SYS_write, fd,
+                                                  profile_buffer + bytes_written,
+                                                  required_size - bytes_written);
     if (ret < 0) {
-      if (ret == -4) // EINTR retry
+      if (ret == -EINTR) // EINTR retry
         continue;
       break;
     }
@@ -223,4 +227,3 @@ TEST_MAIN(int argc, char **argv, char **envp) {
   write_raw_profile();
   return result;
 }
-

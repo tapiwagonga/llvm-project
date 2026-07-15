@@ -6,85 +6,97 @@
 # SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 #
 #===----------------------------------------------------------------------===#
-#
-# Aggregates LLVM libc code coverage profiles and generates reports.
-#
-#===----------------------------------------------------------------------===#
 
 import argparse
 import glob
 import os
+import shutil
 import subprocess
 import sys
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate libc coverage report")
-    parser.add_argument("--build-dir", required=True, help="Path to the build directory")
-    parser.add_argument("--llvm-tools-dir", default="", help="Path to LLVM tools")
+    parser = argparse.ArgumentParser(description="Generate libc code coverage report")
+    parser.add_argument("--build-dir", required=True, help="Path to the libc build directory")
+    parser.add_argument("--llvm-tools-dir", required=True, help="Path to the LLVM tools directory (llvm-profdata, llvm-cov)")
     args = parser.parse_args()
 
     build_dir = args.build_dir
     tools_dir = args.llvm_tools_dir
-    profiles_dir = os.path.join(build_dir, "profiles")
+
+    profdata_tool = os.path.join(tools_dir, "llvm-profdata")
+    cov_tool = os.path.join(tools_dir, "llvm-cov")
+
+    if not os.path.isfile(profdata_tool):
+        profdata_tool = shutil.which("llvm-profdata-19") or shutil.which("llvm-profdata")
     
-    # 1. Find all profraw files
-    profraw_files = glob.glob(os.path.join(profiles_dir, "*.profraw"))
-    if not profraw_files:
-        print(f"Error: No .profraw files found in {profiles_dir}. Did tests run with coverage enabled?", file=sys.stderr)
+    if not os.path.isfile(cov_tool):
+        cov_tool = shutil.which("llvm-cov-19") or shutil.which("llvm-cov")
+
+    if not profdata_tool or not cov_tool:
+        print(f"Error: Could not find llvm-profdata or llvm-cov in {tools_dir} or in PATH")
         sys.exit(1)
-    
-    # 2. Merge profraw files
-    # Find llvm-profdata
-    llvm_profdata = "llvm-profdata-19"
-    if tools_dir:
-        local_profdata = os.path.join(tools_dir, "llvm-profdata")
-        if os.path.exists(local_profdata):
-            llvm_profdata = local_profdata
-        
-    merged_profdata = os.path.join(build_dir, "merged.profdata")
-    
-    # Write paths to a list file to avoid ARG_MAX limits
+
+    profiles_dir = os.path.join(build_dir, "profiles")
+    profraw_files = glob.glob(os.path.join(profiles_dir, "*.profraw"))
+
+    if not profraw_files:
+        print(f"Error: No .profraw files found in {profiles_dir}. Did tests run with coverage enabled?")
+        sys.exit(1)
+
+    # Prevent command line too long error by writing paths to a file
     list_file = os.path.join(build_dir, "profraw_list.txt")
     with open(list_file, "w") as f:
-        for pf in profraw_files:
-            f.write(f"{pf}\n")
-            
-    print(f"Merging {len(profraw_files)} profile files...")
-    subprocess.check_call([llvm_profdata, "merge", "-sparse", "-input-files=" + list_file, "-o", merged_profdata])
+        for p in profraw_files:
+            f.write(p + "\n")
+
+    merged_profdata = os.path.join(build_dir, "merged.profdata")
+
+    print(f"Merging {len(profraw_files)} profiles into {merged_profdata}...")
+    subprocess.check_call(
+        [profdata_tool, "merge", "-sparse", f"-input-files={list_file}", "-o", merged_profdata]
+    )
     
-    # 3. Find all test binaries
-    # We look for *.__build__ in the test directory
+    # Remove raw profiles after merge to save space and prevent inflation on next run
+    for p in profraw_files:
+        try:
+            os.remove(p)
+        except OSError:
+            pass
+    if os.path.exists(list_file):
+        os.remove(list_file)
+
     test_dir = os.path.join(build_dir, "test")
-    # Python 3.5+ recursive glob
-    test_binaries = glob.glob(os.path.join(test_dir, "**", "*.__build__"), recursive=True)
+    test_binaries = []
+    for root, dirs, files in os.walk(test_dir):
+        for f in files:
+            if f.endswith(".__build__"):
+                test_binaries.append(os.path.join(root, f))
+
     if not test_binaries:
-        print(f"Error: No test binaries found in {test_dir}.", file=sys.stderr)
+        print(f"Error: No test binaries found in {test_dir}")
         sys.exit(1)
-        
-    # 4. Generate report
-    llvm_cov = "llvm-cov-19"
-    if tools_dir:
-        local_cov = os.path.join(tools_dir, "llvm-cov")
-        if os.path.exists(local_cov):
-            llvm_cov = local_cov
-        
-    cov_cmd = [llvm_cov, "report", test_binaries[0]]
+
+    # Use the first binary as the main object, the rest as -object arguments
+    cov_cmd = [
+        cov_tool, "report", test_binaries[0],
+        f"-instr-profile={merged_profdata}",
+        "--show-mcdc-summary"
+    ]
+
     for tb in test_binaries[1:]:
-        cov_cmd.extend(["-object", tb])
-    cov_cmd.extend(["-instr-profile", merged_profdata])
-    
-    # Calculate the absolute path to the libc directory
-    libc_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    
-    # Restrict the coverage report strictly to core source directories
+        cov_cmd.append(f"-object={tb}")
+
+    # Add source path filtering so we only get coverage for core library implementation,
+    # rather than inflating coverage with test suite files.
+    workspace_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     cov_cmd.extend([
-        os.path.join(libc_dir, "src"),
-        os.path.join(libc_dir, "include"),
-        os.path.join(libc_dir, "hdr")
+        os.path.join(workspace_root, "src"),
+        os.path.join(workspace_root, "include"),
+        os.path.join(workspace_root, "hdr")
     ])
-    
+
     print("Generating coverage report...")
     subprocess.check_call(cov_cmd)
-    
+
 if __name__ == "__main__":
-    sys.exit(main())
+    main()
