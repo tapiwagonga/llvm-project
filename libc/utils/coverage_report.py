@@ -36,11 +36,12 @@ def main():
         print(f"Error: Could not find llvm-profdata or llvm-cov in {tools_dir} or in PATH")
         sys.exit(1)
 
-    profiles_dir = os.path.join(build_dir, "profiles")
-    profraw_files = glob.glob(os.path.join(profiles_dir, "*.profraw"))
+    # Find all .profraw files recursively throughout the build tree
+    # This ensures we catch profiles dumped in subdirectories if LLVM_PROFILE_FILE isn't strictly adhered to.
+    profraw_files = glob.glob(os.path.join(build_dir, "**", "*.profraw"), recursive=True)
 
     if not profraw_files:
-        print(f"Error: No .profraw files found in {profiles_dir}. Did tests run with coverage enabled?")
+        print(f"Error: No .profraw files found in {build_dir}. Did tests run with coverage enabled?")
         sys.exit(1)
 
     # Prevent command line too long error by writing paths to a file
