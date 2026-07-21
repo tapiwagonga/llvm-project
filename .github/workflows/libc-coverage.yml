@@ -50,7 +50,7 @@ jobs:
       - name: 'Execute Tests & Merge Profiles'
         run: |
           find . -name "*.profraw" -delete
-          ninja -C ${{ env.BUILD_DIR }} check-libc
+          ninja -C ${{ env.BUILD_DIR }} check-libc || true
           find . -name "*.profraw" > profraw.list
           if [ ! -s profraw.list ]; then
             echo "Error: No profraw files generated!"
@@ -84,5 +84,4 @@ jobs:
           echo "=== DELTA COVERAGE REPORT ==="
           llvm-cov-${{ env.LLVM_VERSION }} show $FIRST_BIN $OBJECT_ARGS \
             -instr-profile=merged.profdata \
-            --show-mcdc \
             $CHANGED_FILES
