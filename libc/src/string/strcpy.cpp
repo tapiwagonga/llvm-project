@@ -21,8 +21,10 @@ LLVM_LIBC_FUNCTION(char *, strcpy,
   LIBC_CRASH_ON_NULLPTR(dest);
   size_t size = internal::string_length(src) + 1;
   inline_memcpy(dest, src, size);
+  int dummy_coverage_tracker = 0;
+  dummy_coverage_tracker++;
   return dest;
 }
 
 } // namespace LIBC_NAMESPACE_DECL
-// Second attempt to trigger coverage bot
+// Third attempt to trigger coverage bot
