@@ -67,7 +67,7 @@ jobs:
             exit 0
           fi
           
-          BINS=( $(find ${{ env.BUILD_DIR }}/test -name "*.__build__") )
+          BINS=( $(find ${{ env.BUILD_DIR }}/projects/libc/test -name "*.__build__") )
           if [ ${#BINS[@]} -eq 0 ]; then
             echo "Error: No test binaries found!"
             exit 1
