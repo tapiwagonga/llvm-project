@@ -58,15 +58,8 @@ jobs:
           fi
           llvm-profdata-${{ env.LLVM_VERSION }} merge -sparse -input-files=profraw.list -o merged.profdata
 
-      - name: 'Extract and Display Delta Coverage'
+      - name: 'Extract and Display Coverage'
         run: |
-          CHANGED_FILES=$(git diff --name-only --diff-filter=AM HEAD~1 HEAD | grep -E '^libc/.*\.(cpp|h)$' || true)
-          
-          if [ -z "$CHANGED_FILES" ]; then
-            echo "No C/C++ libc files changed in this commit. Skipping delta."
-            exit 0
-          fi
-          
           BINS=( $(find ${{ env.BUILD_DIR }}/projects/libc/test -name "*.__build__") )
           if [ ${#BINS[@]} -eq 0 ]; then
             echo "Error: No test binaries found!"
@@ -74,14 +67,25 @@ jobs:
           fi
           
           FIRST_BIN="${BINS[0]}"
-          OBJECT_ARGS=""
+          OBJECT_ARGS=()
           for i in "${!BINS[@]}"; do
             if [ $i -ne 0 ]; then
-              OBJECT_ARGS="$OBJECT_ARGS -object=${BINS[$i]}"
+              OBJECT_ARGS+=("-object=${BINS[$i]}")
             fi
           done
           
-          echo "=== DELTA COVERAGE REPORT ==="
-          llvm-cov-${{ env.LLVM_VERSION }} show $FIRST_BIN $OBJECT_ARGS \
+          echo "=== FULL LIBC COVERAGE METRICS ==="
+          llvm-cov-${{ env.LLVM_VERSION }} report "$FIRST_BIN" "${OBJECT_ARGS[@]}" \
             -instr-profile=merged.profdata \
-            $CHANGED_FILES
+            -ignore-filename-regex=".*test.*"
+            
+          CHANGED_FILES=$(git diff --name-only --diff-filter=AM HEAD~1 HEAD | grep -E '^libc/.*\.(cpp|h)$' || true)
+          if [ -z "$CHANGED_FILES" ]; then
+            echo "=== DELTA COVERAGE REPORT ==="
+            echo "No C/C++ libc files changed in this commit. Skipping delta line coverage."
+          else
+            echo "=== DELTA COVERAGE REPORT ==="
+            llvm-cov-${{ env.LLVM_VERSION }} show "$FIRST_BIN" "${OBJECT_ARGS[@]}" \
+              -instr-profile=merged.profdata \
+              $CHANGED_FILES
+          fi
