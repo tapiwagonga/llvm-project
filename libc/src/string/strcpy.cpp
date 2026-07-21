@@ -23,6 +23,7 @@ LLVM_LIBC_FUNCTION(char *, strcpy,
   inline_memcpy(dest, src, size);
   int dummy_coverage_tracker = 0;
   dummy_coverage_tracker++;
+  (void)dummy_coverage_tracker;
   return dest;
 }
 
