@@ -450,13 +450,4 @@ if (LIBC_INCLUDE_DOCS)
   add_subdirectory(docs)
 endif()
 
-if(LLVM_LIBC_ENABLE_COVERAGE)
-  find_package(Python3 REQUIRED COMPONENTS Interpreter)
-  file(MAKE_DIRECTORY ${LIBC_BUILD_DIR}/profiles)
-  add_custom_target(libc-coverage
-    COMMAND ${Python3_EXECUTABLE} ${LIBC_SOURCE_DIR}/utils/coverage_report.py
-            --build-dir ${LIBC_BUILD_DIR} --llvm-tools-dir ${LLVM_TOOLS_BINARY_DIR}
-    COMMENT "Aggregating and generating libc code coverage report"
-    USES_TERMINAL
-  )
-endif()
+

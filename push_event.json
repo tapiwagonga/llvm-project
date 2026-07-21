@@ -1,0 +1,14 @@
+{
+  "ref": "refs/heads/main",
+  "before": "c37a75c",
+  "after": "b025ef1",
+  "repository": {
+    "full_name": "llvm/llvm-project"
+  },
+  "commits": [
+    {
+      "id": "1234567890abcdef1234567890abcdef12345678",
+      "message": "Add coverage tracking for strtoint32"
+    }
+  ]
+}

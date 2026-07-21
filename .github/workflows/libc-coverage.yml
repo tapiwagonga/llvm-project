@@ -4,17 +4,7 @@ on:
   push:
     branches:
       - main
-      - test-libc-coverage-bot
-    paths:
-      - 'libc/**'
-      - '.github/workflows/libc-coverage.yml'
-  pull_request:
-    branches:
-      - main
-      - test-libc-coverage-bot
-    paths:
-      - 'libc/**'
-      - '.github/workflows/libc-coverage.yml'
+      - 'test-coverage/**'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -28,12 +18,14 @@ env:
 
 jobs:
   run-coverage:
-    name: 'Generate and Display Code Coverage'
+    name: 'Generate Native Delta Coverage'
     runs-on: ubuntu-latest
     
     steps:
       - name: 'Checkout Repository'
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
       - name: 'Install System Dependencies'
         run: |
@@ -55,10 +47,42 @@ jobs:
             -DLLVM_LIBC_ENABLE_LINTING=OFF \
             -DLLVM_LIBC_ENABLE_COVERAGE=ON
 
-      - name: 'Execute Instrumented Test Suite'
+      - name: 'Execute Tests & Merge Profiles'
         run: |
+          find . -name "*.profraw" -delete
           ninja -C ${{ env.BUILD_DIR }} check-libc || true
+          find . -name "*.profraw" > profraw.list
+          if [ ! -s profraw.list ]; then
+            echo "Error: No profraw files generated!"
+            exit 1
+          fi
+          llvm-profdata-${{ env.LLVM_VERSION }} merge -sparse -input-files=profraw.list -o merged.profdata
 
-      - name: 'Aggregate Profiles and Display Coverage Report'
+      - name: 'Extract and Display Delta Coverage'
         run: |
-          ninja -C ${{ env.BUILD_DIR }} libc-coverage
+          CHANGED_FILES=$(git diff --name-only --diff-filter=AM HEAD~1 HEAD | grep -E '^libc/.*\.(cpp|h)$' || true)
+          
+          if [ -z "$CHANGED_FILES" ]; then
+            echo "No C/C++ libc files changed in this commit. Skipping delta."
+            exit 0
+          fi
+          
+          BINS=( $(find ${{ env.BUILD_DIR }}/test -name "*.__build__") )
+          if [ ${#BINS[@]} -eq 0 ]; then
+            echo "Error: No test binaries found!"
+            exit 1
+          fi
+          
+          FIRST_BIN="${BINS[0]}"
+          OBJECT_ARGS=""
+          for i in "${!BINS[@]}"; do
+            if [ $i -ne 0 ]; then
+              OBJECT_ARGS="$OBJECT_ARGS -object=${BINS[$i]}"
+            fi
+          done
+          
+          echo "=== DELTA COVERAGE REPORT ==="
+          llvm-cov-${{ env.LLVM_VERSION }} show $FIRST_BIN $OBJECT_ARGS \
+            -instr-profile=merged.profdata \
+            --show-mcdc \
+            $CHANGED_FILES
