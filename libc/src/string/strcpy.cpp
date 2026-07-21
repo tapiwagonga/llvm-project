@@ -25,4 +25,4 @@ LLVM_LIBC_FUNCTION(char *, strcpy,
 }
 
 } // namespace LIBC_NAMESPACE_DECL
-// trigger coverage bot
+// Second attempt to trigger coverage bot
