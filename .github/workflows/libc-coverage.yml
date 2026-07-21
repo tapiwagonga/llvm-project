@@ -26,6 +26,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 2
+          submodules: false
 
       - name: 'Install System Dependencies'
         run: |
@@ -41,7 +42,6 @@ jobs:
           cmake -S llvm -B ${{ env.BUILD_DIR }} -G Ninja \
             -DLLVM_ENABLE_PROJECTS="libc" \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-            -DLLVM_USE_LINKER=lld \
             -DCMAKE_C_COMPILER=${{ env.CLANG_CC }} \
             -DCMAKE_CXX_COMPILER=${{ env.CLANG_CXX }} \
             -DLLVM_LIBC_ENABLE_LINTING=OFF \
@@ -50,7 +50,7 @@ jobs:
       - name: 'Execute Tests & Merge Profiles'
         run: |
           find . -name "*.profraw" -delete
-          ninja -C ${{ env.BUILD_DIR }} check-libc || true
+          ninja -C ${{ env.BUILD_DIR }} check-libc
           find . -name "*.profraw" > profraw.list
           if [ ! -s profraw.list ]; then
             echo "Error: No profraw files generated!"
