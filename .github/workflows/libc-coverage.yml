@@ -91,11 +91,16 @@ jobs:
           else
             echo "=== DELTA COVERAGE REPORT ==="
             {
-              echo "### Delta Coverage (Changed Files)"
+              echo "### Delta Coverage (Source Map)"
               echo '```cpp'
               llvm-cov-${{ env.LLVM_VERSION }} show "$FIRST_BIN" "${OBJECT_ARGS[@]}" \
                 -instr-profile=merged.profdata \
-                $CHANGED_FILES
+                $CHANGED_FILES > /tmp/delta_cov.txt
+              cat /tmp/delta_cov.txt
               echo '```'
             } | tee -a $GITHUB_STEP_SUMMARY
+            
+            # --- PATCH COVERAGE METRICS ---
+            git diff HEAD~1 HEAD --unified=0 $CHANGED_FILES > /tmp/git_diff.txt || true
+            awk -f libc/utils/patch_coverage.awk /tmp/git_diff.txt /tmp/delta_cov.txt >> $GITHUB_STEP_SUMMARY || true
           fi
