@@ -74,6 +74,35 @@ jobs:
             fi
           done
           
+          CHANGED_FILES=$(git diff --name-only --diff-filter=AM HEAD~1 HEAD | grep -E '^libc/.*\.(cpp|h)$' || true)
+          if [ -z "$CHANGED_FILES" ]; then
+            echo "=== DELTA COVERAGE REPORT ==="
+            echo "No C/C++ libc files changed in this commit. Skipping delta line coverage."
+          else
+            echo "=== DELTA COVERAGE REPORT ==="
+            
+            # Extract raw data to local temporary files
+            git diff HEAD~1 HEAD --unified=0 $CHANGED_FILES > coverage_git_diff.tmp || true
+            llvm-cov-${{ env.LLVM_VERSION }} show "$FIRST_BIN" "${OBJECT_ARGS[@]}" \
+              -instr-profile=merged.profdata \
+              $CHANGED_FILES > coverage_source_map.tmp || true
+              
+            # 1. Execute and Print Patch Coverage Metrics (Highest Priority)
+            awk -f libc/utils/patch_coverage.awk coverage_git_diff.tmp coverage_source_map.tmp >> $GITHUB_STEP_SUMMARY || true
+            
+            # 2. Print Delta Coverage Source Map
+            {
+              echo "### Delta Coverage (Source Map)"
+              echo '```cpp'
+              cat coverage_source_map.tmp
+              echo '```'
+            } | tee -a $GITHUB_STEP_SUMMARY
+            
+            # Cleanup temporary files
+            rm -f coverage_git_diff.tmp coverage_source_map.tmp
+          fi
+
+          # 3. Print Full Project Metrics (Lowest Priority)
           echo "=== FULL LIBC COVERAGE METRICS ==="
           {
             echo "### Full LLVM-libc Coverage Metrics"
@@ -83,24 +112,3 @@ jobs:
               -ignore-filename-regex=".*test.*"
             echo '```'
           } | tee -a $GITHUB_STEP_SUMMARY
-            
-          CHANGED_FILES=$(git diff --name-only --diff-filter=AM HEAD~1 HEAD | grep -E '^libc/.*\.(cpp|h)$' || true)
-          if [ -z "$CHANGED_FILES" ]; then
-            echo "=== DELTA COVERAGE REPORT ==="
-            echo "No C/C++ libc files changed in this commit. Skipping delta line coverage."
-          else
-            echo "=== DELTA COVERAGE REPORT ==="
-            {
-              echo "### Delta Coverage (Source Map)"
-              echo '```cpp'
-              llvm-cov-${{ env.LLVM_VERSION }} show "$FIRST_BIN" "${OBJECT_ARGS[@]}" \
-                -instr-profile=merged.profdata \
-                $CHANGED_FILES > /tmp/delta_cov.txt
-              cat /tmp/delta_cov.txt
-              echo '```'
-            } | tee -a $GITHUB_STEP_SUMMARY
-            
-            # --- PATCH COVERAGE METRICS ---
-            git diff HEAD~1 HEAD --unified=0 $CHANGED_FILES > /tmp/git_diff.txt || true
-            awk -f libc/utils/patch_coverage.awk /tmp/git_diff.txt /tmp/delta_cov.txt >> $GITHUB_STEP_SUMMARY || true
-          fi

@@ -34,13 +34,14 @@ NR==FNR {
         break
       }
     }
-  } else if (current_file != "" && match($0, /^ *([0-9]+)\| *([0-9kM]+|0)?\|/, arr)) {
+  } else if (current_file != "" && match($0, /^ *([0-9]+)\| *([^\| ]*)? *\|/, arr)) {
     line = arr[1]
     count = arr[2]
     # Check if this exact line was added/modified
     if (changed[current_file, line] == 1) {
       if (count == "0") {
         missed++
+        missed_details = missed_details sprintf("- `%s` (Line %d)\n", current_file, line)
       } else if (count != "") {
         covered++
       }
@@ -50,7 +51,7 @@ NR==FNR {
 
 END {
   total = covered + missed
-  print "### 🎯 Patch Coverage Metrics (Changed Lines Only)"
+  print "### Patch Coverage Metrics (Changed Lines Only)"
   print "| Metric | Value |"
   print "|--------|-------|"
   if (total == 0) {
@@ -59,6 +60,9 @@ END {
     printf "| **Patch Coverage** | `%.2f%%` (%d/%d lines) |\n", (covered/total)*100, covered, total
     if (missed > 0) {
       printf "| **Missed Lines** | `%d` |\n", missed
+      print "\n#### Untested Lines:"
+      print "The following lines were introduced in this patch but were not executed by the test suite. Please write tests to cover them:"
+      print missed_details
     }
   }
 }

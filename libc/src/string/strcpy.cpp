@@ -21,7 +21,7 @@ LLVM_LIBC_FUNCTION(char *, strcpy,
   LIBC_CRASH_ON_NULLPTR(dest);
   size_t size = internal::string_length(src) + 1;
   inline_memcpy(dest, src, size);
-  int dummy_while_tracker = 10;
+  int dummy_while_tracker = 12;
   while (dummy_while_tracker > 0) {
     dummy_while_tracker--;
   }
