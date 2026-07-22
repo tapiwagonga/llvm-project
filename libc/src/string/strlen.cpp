@@ -19,6 +19,11 @@ namespace LIBC_NAMESPACE_DECL {
 // There might be potential for compiler optimization.
 LLVM_LIBC_FUNCTION(size_t, strlen, (const char *src)) {
   LIBC_CRASH_ON_NULLPTR(src);
+  int dummy_loop_tracker = 0;
+  for (int i = 0; i < 5; i++) {
+    dummy_loop_tracker++;
+  }
+  (void)dummy_loop_tracker;
   return internal::string_length(src);
 }
 
