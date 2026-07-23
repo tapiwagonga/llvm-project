@@ -34,8 +34,8 @@ jobs:
 
       - name: 'Install System Dependencies'
         run: |
-          apt-get update
-          apt-get install -y \
+          sudo apt-get update
+          sudo apt-get install -y \
             clang-${{ env.LLVM_VERSION }} \
             llvm-${{ env.LLVM_VERSION }} \
             lld-${{ env.LLVM_VERSION }} \
@@ -46,8 +46,8 @@ jobs:
           cmake -S llvm -B ${{ env.BUILD_DIR }} -G Ninja \
             -DLLVM_ENABLE_PROJECTS="libc" \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-            -DCMAKE_C_COMPILER=${{ env.CLANG_CC }} \
-            -DCMAKE_CXX_COMPILER=${{ env.CLANG_CXX }} \
+            -DCMAKE_C_COMPILER=clang-${{ env.LLVM_VERSION }} \
+            -DCMAKE_CXX_COMPILER=clang++-${{ env.LLVM_VERSION }} \
             -DLLVM_LIBC_ENABLE_LINTING=OFF \
             -DLLVM_LIBC_ENABLE_COVERAGE=ON
 
