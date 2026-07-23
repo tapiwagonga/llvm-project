@@ -56,22 +56,37 @@ jobs:
 
       - name: 'Execute Tests & Merge Profiles'
         run: |
+          set -euo pipefail
+          echo "::group::Cleaning old profraw files"
           find . -name "*.profraw" -delete
-          ninja -C ${{ env.BUILD_DIR }} check-libc || true
+          echo "::endgroup::"
+
+          echo "::group::Running libc test suite"
+          ninja -C ${{ env.BUILD_DIR }} check-libc || echo "::warning::Some tests failed, proceeding to coverage extraction"
+          echo "::endgroup::"
+
+          echo "::group::Merging profile data"
           find . -name "*.profraw" > profraw.list
           if [ ! -s profraw.list ]; then
-            echo "Error: No profraw files generated!"
+            echo "::error::No profraw files generated! The atexit hook may have failed or no tests were executed."
             exit 1
           fi
+
+          PROFRAW_COUNT=$(wc -l < profraw.list)
+          echo "Found $PROFRAW_COUNT profile files. Merging..."
           llvm-profdata-${{ env.LLVM_VERSION }} merge -sparse -input-files=profraw.list -o merged.profdata
+          echo "::endgroup::"
 
       - name: 'Extract and Display Coverage'
         run: |
+          set -euo pipefail
+          echo "::group::Locating Test Binaries"
           BINS=( $(find ${{ env.BUILD_DIR }}/projects/libc/test -name "*.__build__") )
           if [ ${#BINS[@]} -eq 0 ]; then
-            echo "Error: No test binaries found!"
+            echo "::error::No test binaries found in build directory!"
             exit 1
           fi
+          echo "Located ${#BINS[@]} test binaries."
 
           FIRST_BIN="${BINS[0]}"
           OBJECT_ARGS=()
@@ -80,7 +95,9 @@ jobs:
               OBJECT_ARGS+=("-object=${BINS[$i]}")
             fi
           done
+          echo "::endgroup::"
 
+          echo "::group::Extracting Delta Patch Data"
           # Critical Fix for Docker: Override Dubious Ownership
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
@@ -88,7 +105,10 @@ jobs:
           if [ -z "$CHANGED_FILES" ]; then
             echo "=== DELTA COVERAGE REPORT ==="
             echo "No C/C++ libc files changed in this commit. Skipping delta line coverage."
+            echo "::endgroup::"
           else
+            echo "Found changed libc files:"
+            echo "$CHANGED_FILES"
             echo "=== DELTA COVERAGE REPORT ==="
 
             # Extract raw data to local temporary files
@@ -110,19 +130,21 @@ jobs:
 
             # Cleanup temporary files
             rm -f coverage_git_diff.tmp coverage_source_map.tmp
+            echo "::endgroup::"
           fi
 
+          echo "::group::Extracting Full Project Metrics"
           # 3. Print Full Project Metrics (Lowest Priority)
           echo "=== FULL LIBC COVERAGE METRICS ==="
           {
             echo "### Full LLVM-libc Coverage Metrics"
             echo '```text'
-
             llvm-cov-${{ env.LLVM_VERSION }} report "$FIRST_BIN" "${OBJECT_ARGS[@]}" \
               -instr-profile=merged.profdata \
               -ignore-filename-regex=".*test.*"
             echo '```'
           } | tee -a $GITHUB_STEP_SUMMARY
+          echo "::endgroup::"
 
       - name: 'Workspace Teardown'
         if: always()
