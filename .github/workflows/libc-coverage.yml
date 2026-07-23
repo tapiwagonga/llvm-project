@@ -24,6 +24,9 @@ jobs:
     name: 'Generate Native Delta Coverage'
     runs-on: ubuntu-latest
     container: 'ghcr.io/llvm/libc-ubuntu-24.04:latest'
+    defaults:
+      run:
+        shell: bash
 
     steps:
       - name: 'Checkout Repository'
@@ -114,7 +117,7 @@ jobs:
           {
             echo "### Full LLVM-libc Coverage Metrics"
             echo '```text'
-            llvm-cov-${{ env.LLVM_VERSION }} repo
+
             llvm-cov-${{ env.LLVM_VERSION }} report "$FIRST_BIN" "${OBJECT_ARGS[@]}" \
               -instr-profile=merged.profdata \
               -ignore-filename-regex=".*test.*"
