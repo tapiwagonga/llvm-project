@@ -5,6 +5,9 @@ on:
     branches:
       - main
       - 'test-coverage/**'
+  pull_request:
+    branches:
+      - main
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -20,7 +23,8 @@ jobs:
   run-coverage:
     name: 'Generate Native Delta Coverage'
     runs-on: ubuntu-latest
-    
+    container: 'ghcr.io/llvm/libc-ubuntu-24.04:latest'
+
     steps:
       - name: 'Checkout Repository'
         uses: actions/checkout@v4
@@ -30,8 +34,8 @@ jobs:
 
       - name: 'Install System Dependencies'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
+          apt-get update
+          apt-get install -y \
             clang-${{ env.LLVM_VERSION }} \
             llvm-${{ env.LLVM_VERSION }} \
             lld-${{ env.LLVM_VERSION }} \
@@ -65,7 +69,7 @@ jobs:
             echo "Error: No test binaries found!"
             exit 1
           fi
-          
+
           FIRST_BIN="${BINS[0]}"
           OBJECT_ARGS=()
           for i in "${!BINS[@]}"; do
@@ -73,23 +77,26 @@ jobs:
               OBJECT_ARGS+=("-object=${BINS[$i]}")
             fi
           done
-          
+
+          # Critical Fix for Docker: Override Dubious Ownership
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
           CHANGED_FILES=$(git diff --name-only --diff-filter=AM HEAD~1 HEAD | grep -E '^libc/.*\.(cpp|h)$' || true)
           if [ -z "$CHANGED_FILES" ]; then
             echo "=== DELTA COVERAGE REPORT ==="
             echo "No C/C++ libc files changed in this commit. Skipping delta line coverage."
           else
             echo "=== DELTA COVERAGE REPORT ==="
-            
+
             # Extract raw data to local temporary files
             git diff HEAD~1 HEAD --unified=0 $CHANGED_FILES > coverage_git_diff.tmp || true
             llvm-cov-${{ env.LLVM_VERSION }} show "$FIRST_BIN" "${OBJECT_ARGS[@]}" \
               -instr-profile=merged.profdata \
               $CHANGED_FILES > coverage_source_map.tmp || true
-              
+
             # 1. Execute and Print Patch Coverage Metrics (Highest Priority)
             awk -f libc/utils/patch_coverage.awk coverage_git_diff.tmp coverage_source_map.tmp >> $GITHUB_STEP_SUMMARY || true
-            
+
             # 2. Print Delta Coverage Source Map
             {
               echo "### Delta Coverage (Source Map)"
@@ -97,7 +104,7 @@ jobs:
               cat coverage_source_map.tmp
               echo '```'
             } | tee -a $GITHUB_STEP_SUMMARY
-            
+
             # Cleanup temporary files
             rm -f coverage_git_diff.tmp coverage_source_map.tmp
           fi
@@ -107,8 +114,13 @@ jobs:
           {
             echo "### Full LLVM-libc Coverage Metrics"
             echo '```text'
+            llvm-cov-${{ env.LLVM_VERSION }} repo
             llvm-cov-${{ env.LLVM_VERSION }} report "$FIRST_BIN" "${OBJECT_ARGS[@]}" \
               -instr-profile=merged.profdata \
               -ignore-filename-regex=".*test.*"
             echo '```'
           } | tee -a $GITHUB_STEP_SUMMARY
+
+      - name: 'Workspace Teardown'
+        if: always()
+        run: rm -rf ${{ env.BUILD_DIR }} *.tmp

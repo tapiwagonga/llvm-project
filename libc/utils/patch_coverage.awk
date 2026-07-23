@@ -46,6 +46,19 @@ NR==FNR {
         covered++
       }
     }
+  } else if (current_file != "" && match($0, /Branch \(([0-9]+):[0-9]+\): \[True: ([^, ]+), False: ([^\] ]+)\]/, arr)) {
+    branch_line = arr[1]
+    true_count = arr[2]
+    false_count = arr[3]
+    if (changed[current_file, branch_line] == 1) {
+      mcdc_total++
+      if (true_count == "0" || false_count == "0") {
+        mcdc_missed++
+        mcdc_missed_details = mcdc_missed_details sprintf("- `%s` (Line %d): Incomplete Branch Logic\n", current_file, branch_line)
+      } else {
+        mcdc_covered++
+      }
+    }
   }
 }
 
@@ -55,14 +68,19 @@ END {
   print "| Metric | Value |"
   print "|--------|-------|"
   if (total == 0) {
-    print "| **Patch Coverage** | `N/A (No executable lines changed)` |"
+    print "| **Line Coverage** | `N/A (No executable lines changed)` |"
   } else {
-    printf "| **Patch Coverage** | `%.2f%%` (%d/%d lines) |\n", (covered/total)*100, covered, total
-    if (missed > 0) {
-      printf "| **Missed Lines** | `%d` |\n", missed
-      print "\n#### Untested Lines:"
-      print "The following lines were introduced in this patch but were not executed by the test suite. Please write tests to cover them:"
-      print missed_details
+    printf "| **Line Coverage** | `%.2f%%` (%d/%d lines) |\n", (covered/total)*100, covered, total
+    
+    if (mcdc_total > 0) {
+      printf "| **MC/DC Logic** | `%.2f%%` (%d/%d conditions) |\n", (mcdc_covered/mcdc_total)*100, mcdc_covered, mcdc_total
+    }
+    
+    if (missed > 0 || mcdc_missed > 0) {
+      print "\n#### Untested Code:"
+      print "The following lines or branches were introduced in this patch but were not fully executed by the test suite. Please write tests to cover them:"
+      if (missed > 0) print missed_details
+      if (mcdc_missed > 0) print mcdc_missed_details
     }
   }
 }

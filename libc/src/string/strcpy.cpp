@@ -19,6 +19,9 @@ namespace LIBC_NAMESPACE_DECL {
 LLVM_LIBC_FUNCTION(char *, strcpy,
                    (char *__restrict dest, const char *__restrict src)) {
   LIBC_CRASH_ON_NULLPTR(dest);
+  if (src == nullptr) {
+    return nullptr;
+  }
   size_t size = internal::string_length(src) + 1;
   inline_memcpy(dest, src, size);
   if (size == 9999999) {
