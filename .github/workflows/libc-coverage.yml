@@ -1,6 +1,20 @@
 name: 'LLVM Libc Code Coverage Pipeline'
 
 on:
+  workflow_call:
+    inputs:
+      project_name:
+        required: false
+        type: string
+        default: 'libc'
+      fallback_target:
+        required: false
+        type: string
+        default: 'check-libc'
+      source_dir:
+        required: false
+        type: string
+        default: 'libc/src'
   push:
     branches:
       - main
@@ -47,15 +61,7 @@ jobs:
           fetch-depth: 2
           submodules: false
 
-      - name: 'Install System Dependencies'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            clang-${{ env.LLVM_VERSION }} \
-            llvm-${{ env.LLVM_VERSION }} \
-            lld-${{ env.LLVM_VERSION }} \
-            ninja-build \
-            ccache
+
 
       - name: 'Configure Compiler Cache (ccache)'
         uses: actions/cache@v4
@@ -69,15 +75,18 @@ jobs:
       - name: 'Configure CMake Build System'
         run: |
           cmake -S llvm -B ${{ env.BUILD_DIR }} -G Ninja \
-            -DLLVM_ENABLE_PROJECTS="libc" \
+            -DLLVM_ENABLE_PROJECTS="${{ inputs.project_name || 'libc' }}" \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DCMAKE_C_COMPILER=clang-${{ env.LLVM_VERSION }} \
             -DCMAKE_CXX_COMPILER=clang++-${{ env.LLVM_VERSION }} \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_C_FLAGS="-gsplit-dwarf -Wno-error" \
+            -DCMAKE_CXX_FLAGS="-gsplit-dwarf -Wno-error" \
             -DLLVM_USE_LINKER=lld \
             -DLLVM_LIBC_ENABLE_LINTING=OFF \
-            -DLLVM_LIBC_ENABLE_COVERAGE=ON
+            -DLLVM_LIBC_ENABLE_COVERAGE=ON \
+            -DLLVM_LIBC_INCLUDE_EXHAUSTIVE_MATH_TESTS=OFF
 
       - name: 'Execute Tests & Merge Profiles'
         run: |
@@ -95,28 +104,32 @@ jobs:
           fi
           CHANGED_FILES=$(git diff --name-only $DIFF_RANGE 2>/dev/null || true)
 
+          PROJECT="${{ inputs.project_name || 'libc' }}"
+          FALLBACK="${{ inputs.fallback_target || 'check-libc' }}"
+          SRCDIR="${{ inputs.source_dir || 'libc/src' }}"
+          
           CORE_CHANGE=0
-          if echo "$CHANGED_FILES" | grep -qE '^(libc/test/UnitTest/|libc/src/__support/|libc/CMakeLists.txt)'; then
+          if echo "$CHANGED_FILES" | grep -qE "^(${PROJECT}/test/UnitTest/|${SRCDIR}/__support/|${PROJECT}/CMakeLists.txt)"; then
             CORE_CHANGE=1
           fi
 
           NINJA_TARGETS=()
           if [ $CORE_CHANGE -eq 1 ] || [ -z "$CHANGED_FILES" ]; then
-            echo "Core framework modified or full baseline run. Executing full check-libc target."
-            NINJA_TARGETS=("check-libc")
+            echo "Core framework modified or full baseline run. Executing fallback target."
+            NINJA_TARGETS=("$FALLBACK")
           else
             for file in $CHANGED_FILES; do
-              if [[ "$file" =~ ^libc/src/([^/]+)/([^/]+)\.cpp$ ]]; then
+              if [[ "$file" =~ ^${SRCDIR}/([^/]+)/([^/]+)\.cpp$ ]]; then
                 dir="${BASH_REMATCH[1]}"
                 func="${BASH_REMATCH[2]}"
-                target="libc.test.src.${dir}.${func}_test"
+                target="${PROJECT}.test.src.${dir}.${func}_test"
                 NINJA_TARGETS+=("$target")
               fi
             done
           fi
 
           if [ ${#NINJA_TARGETS[@]} -eq 0 ]; then
-            NINJA_TARGETS=("check-libc")
+            NINJA_TARGETS=("$FALLBACK")
           fi
           echo "Selected Ninja targets: ${NINJA_TARGETS[*]}"
           echo "::endgroup::"
