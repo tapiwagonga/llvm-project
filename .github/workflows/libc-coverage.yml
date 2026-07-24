@@ -24,6 +24,9 @@ jobs:
     name: 'Generate Native Delta Coverage'
     runs-on: ubuntu-latest
     container: 'ghcr.io/llvm/libc-ubuntu-24.04:latest'
+    permissions:
+      contents: read
+      pull-requests: write
     defaults:
       run:
         shell: bash
@@ -42,7 +45,17 @@ jobs:
             clang-${{ env.LLVM_VERSION }} \
             llvm-${{ env.LLVM_VERSION }} \
             lld-${{ env.LLVM_VERSION }} \
-            ninja-build
+            ninja-build \
+            ccache
+
+      - name: 'Configure Compiler Cache (ccache)'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-libc-coverage-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            ccache-libc-coverage-${{ runner.os }}-main
+            ccache-libc-coverage-${{ runner.os }}-
 
       - name: 'Configure CMake Build System'
         run: |
@@ -51,6 +64,8 @@ jobs:
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DCMAKE_C_COMPILER=clang-${{ env.LLVM_VERSION }} \
             -DCMAKE_CXX_COMPILER=clang++-${{ env.LLVM_VERSION }} \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DLLVM_LIBC_ENABLE_LINTING=OFF \
             -DLLVM_LIBC_ENABLE_COVERAGE=ON
 
@@ -61,8 +76,43 @@ jobs:
           find . -name "*.profraw" -delete
           echo "::endgroup::"
 
+          echo "::group::Resolving Ninja test targets"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            DIFF_RANGE="origin/main...HEAD"
+          else
+            DIFF_RANGE="HEAD~1 HEAD"
+          fi
+          CHANGED_FILES=$(git diff --name-only $DIFF_RANGE 2>/dev/null || true)
+
+          CORE_CHANGE=0
+          if echo "$CHANGED_FILES" | grep -qE '^(libc/test/UnitTest/|libc/src/__support/|libc/CMakeLists.txt)'; then
+            CORE_CHANGE=1
+          fi
+
+          NINJA_TARGETS=()
+          if [ $CORE_CHANGE -eq 1 ] || [ -z "$CHANGED_FILES" ]; then
+            echo "Core framework modified or full baseline run. Executing full check-libc target."
+            NINJA_TARGETS=("check-libc")
+          else
+            for file in $CHANGED_FILES; do
+              if [[ "$file" =~ ^libc/src/([^/]+)/([^/]+)\.cpp$ ]]; then
+                dir="${BASH_REMATCH[1]}"
+                func="${BASH_REMATCH[2]}"
+                target="libc.test.src.${dir}.${func}_test"
+                NINJA_TARGETS+=("$target")
+              fi
+            done
+          fi
+
+          if [ ${#NINJA_TARGETS[@]} -eq 0 ]; then
+            NINJA_TARGETS=("check-libc")
+          fi
+          echo "Selected Ninja targets: ${NINJA_TARGETS[*]}"
+          echo "::endgroup::"
+
           echo "::group::Running libc test suite"
-          ninja -C ${{ env.BUILD_DIR }} check-libc || echo "::warning::Some tests failed, proceeding to coverage extraction"
+          ninja -C ${{ env.BUILD_DIR }} "${NINJA_TARGETS[@]}" || echo "::warning::Some tests failed, proceeding to coverage extraction"
           echo "::endgroup::"
 
           echo "::group::Merging profile data"
@@ -101,7 +151,12 @@ jobs:
           # Critical Fix for Docker: Override Dubious Ownership
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
-          CHANGED_FILES=$(git diff --name-only --diff-filter=AM HEAD~1 HEAD | grep -E '^libc/.*\.(cpp|h)$' || true)
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            DIFF_RANGE="origin/main...HEAD"
+          else
+            DIFF_RANGE="HEAD~1 HEAD"
+          fi
+          CHANGED_FILES=$(git diff --name-only --diff-filter=AM $DIFF_RANGE | grep -E '^libc/.*\.(cpp|h)$' || true)
           if [ -z "$CHANGED_FILES" ]; then
             echo "=== DELTA COVERAGE REPORT ==="
             echo "No C/C++ libc files changed in this commit. Skipping delta line coverage."
@@ -112,13 +167,13 @@ jobs:
             echo "=== DELTA COVERAGE REPORT ==="
 
             # Extract raw data to local temporary files
-            git diff HEAD~1 HEAD --unified=0 $CHANGED_FILES > coverage_git_diff.tmp || true
+            git diff $DIFF_RANGE --unified=0 $CHANGED_FILES > coverage_git_diff.tmp || true
             llvm-cov-${{ env.LLVM_VERSION }} show "$FIRST_BIN" "${OBJECT_ARGS[@]}" \
               -instr-profile=merged.profdata \
               $CHANGED_FILES > coverage_source_map.tmp || true
 
             # 1. Execute and Print Patch Coverage Metrics (Highest Priority)
-            awk -f libc/utils/patch_coverage.awk coverage_git_diff.tmp coverage_source_map.tmp >> $GITHUB_STEP_SUMMARY || true
+            awk -f libc/utils/patch_coverage.awk coverage_git_diff.tmp coverage_source_map.tmp | tee delta_report.tmp >> $GITHUB_STEP_SUMMARY || true
 
             # 2. Print Delta Coverage Source Map
             {
@@ -145,6 +200,44 @@ jobs:
             echo '```'
           } | tee -a $GITHUB_STEP_SUMMARY
           echo "::endgroup::"
+
+      - name: 'Publish Sticky PR Comment'
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            if (!fs.existsSync('delta_report.tmp')) return;
+
+            const report = fs.readFileSync('delta_report.tmp', 'utf8');
+            if (!report.trim()) return;
+
+            const header = '### LLVM Libc Coverage Report (Delta)';
+            const body = `${header}\n\n${report}`;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const botComment = comments.find(c => c.user.type === 'Bot' && c.body.includes(header));
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: body
+              });
+            }
 
       - name: 'Workspace Teardown'
         if: always()

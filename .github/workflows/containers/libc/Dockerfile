@@ -30,6 +30,7 @@ RUN apt-get update && \
     g++-12-arm-linux-gnueabihf \
     sudo \
     sccache \
+    ccache \
     wget \
     lsb-release \
     software-properties-common \
@@ -42,6 +43,7 @@ RUN apt-get update && \
 
 RUN wget https://apt.llvm.org/llvm.sh && \
     chmod +x llvm.sh && \
+    sudo ./llvm.sh 19 && \
     sudo ./llvm.sh 23 && \
     rm llvm.sh
 
