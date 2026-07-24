@@ -61,7 +61,15 @@ jobs:
           fetch-depth: 2
           submodules: false
 
-
+      - name: 'Install System Dependencies'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang-${{ env.LLVM_VERSION }} \
+            llvm-${{ env.LLVM_VERSION }} \
+            lld-${{ env.LLVM_VERSION }} \
+            ninja-build \
+            ccache
 
       - name: 'Configure Compiler Cache (ccache)'
         uses: actions/cache@v4
@@ -95,48 +103,12 @@ jobs:
           find . -name "*.profraw" -delete
           echo "::endgroup::"
 
-          echo "::group::Resolving Ninja test targets"
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            DIFF_RANGE="origin/main...HEAD"
-          else
-            DIFF_RANGE="HEAD~1 HEAD"
-          fi
-          CHANGED_FILES=$(git diff --name-only $DIFF_RANGE 2>/dev/null || true)
-
-          PROJECT="${{ inputs.project_name || 'libc' }}"
           FALLBACK="${{ inputs.fallback_target || 'check-libc' }}"
-          SRCDIR="${{ inputs.source_dir || 'libc/src' }}"
-          
-          CORE_CHANGE=0
-          if echo "$CHANGED_FILES" | grep -qE "^(${PROJECT}/test/UnitTest/|${SRCDIR}/__support/|${PROJECT}/CMakeLists.txt)"; then
-            CORE_CHANGE=1
-          fi
-
-          NINJA_TARGETS=()
-          if [ $CORE_CHANGE -eq 1 ] || [ -z "$CHANGED_FILES" ]; then
-            echo "Core framework modified or full baseline run. Executing fallback target."
-            NINJA_TARGETS=("$FALLBACK")
-          else
-            for file in $CHANGED_FILES; do
-              if [[ "$file" =~ ^${SRCDIR}/([^/]+)/([^/]+)\.cpp$ ]]; then
-                dir="${BASH_REMATCH[1]}"
-                func="${BASH_REMATCH[2]}"
-                target="${PROJECT}.test.src.${dir}.${func}_test"
-                NINJA_TARGETS+=("$target")
-              fi
-            done
-          fi
-
-          if [ ${#NINJA_TARGETS[@]} -eq 0 ]; then
-            NINJA_TARGETS=("$FALLBACK")
-          fi
-          echo "Selected Ninja targets: ${NINJA_TARGETS[*]}"
-          echo "::endgroup::"
+          echo "Selected Ninja target: $FALLBACK"
 
           echo "::group::Running libc test suite"
           ccache --zero-stats
-          ninja -C ${{ env.BUILD_DIR }} "${NINJA_TARGETS[@]}" || echo "::warning::Some tests failed, proceeding to coverage extraction"
+          ninja -C ${{ env.BUILD_DIR }} "$FALLBACK" || echo "::warning::Some tests failed, proceeding to coverage extraction"
           ccache --show-stats
           echo "::endgroup::"
 
