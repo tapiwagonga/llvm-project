@@ -5,9 +5,17 @@ on:
     branches:
       - main
       - 'test-coverage/**'
+    paths:
+      - 'libc/**'
+      - '.github/workflows/libc-coverage.yml'
+      - '.github/workflows/containers/libc/**'
   pull_request:
     branches:
       - main
+    paths:
+      - 'libc/**'
+      - '.github/workflows/libc-coverage.yml'
+      - '.github/workflows/containers/libc/**'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -18,6 +26,7 @@ env:
   LLVM_VERSION: '19'
   CLANG_CC: 'clang-19'
   CLANG_CXX: 'clang++-19'
+  CCACHE_DIR: '/home/gha/.cache/ccache'
 
 jobs:
   run-coverage:
@@ -66,6 +75,7 @@ jobs:
             -DCMAKE_CXX_COMPILER=clang++-${{ env.LLVM_VERSION }} \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DLLVM_USE_LINKER=lld \
             -DLLVM_LIBC_ENABLE_LINTING=OFF \
             -DLLVM_LIBC_ENABLE_COVERAGE=ON
 
@@ -112,7 +122,9 @@ jobs:
           echo "::endgroup::"
 
           echo "::group::Running libc test suite"
+          ccache --zero-stats
           ninja -C ${{ env.BUILD_DIR }} "${NINJA_TARGETS[@]}" || echo "::warning::Some tests failed, proceeding to coverage extraction"
+          ccache --show-stats
           echo "::endgroup::"
 
           echo "::group::Merging profile data"

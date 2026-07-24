@@ -52,7 +52,7 @@ RUN wget https://ftp.gnu.org/gnu/gmp/gmp-6.3.0.tar.xz && \
     tar -xf gmp-6.3.0.tar.xz && \
     cd gmp-6.3.0 && \
     ./configure --host=riscv64-linux-gnu --prefix=/usr/riscv64-linux-gnu && \
-    make -j8 && \
+    make -j$(nproc) && \
     sudo make install && \
     cd .. && \
     rm -rf gmp-6.3.0 && \
@@ -63,7 +63,7 @@ RUN wget https://ftp.gnu.org/gnu/mpfr/mpfr-4.2.2.tar.xz && \
     cd mpfr-4.2.2 && \
     ./configure --host=riscv64-linux-gnu --prefix=/usr/riscv64-linux-gnu \
     --with-gmp=/usr/riscv64-linux-gnu && \
-    make -j8 && \
+    make -j$(nproc) && \
     sudo make install && \
     cd .. && \
     rm -rf mpfr-4.2.2 && \
@@ -75,7 +75,7 @@ RUN wget https://ftp.gnu.org/gnu/mpc/mpc-1.4.1.tar.xz && \
     ./configure --host=riscv64-linux-gnu --prefix=/usr/riscv64-linux-gnu \
     --with-gmp=/usr/riscv64-linux-gnu \
     --with-mpfr=/usr/riscv64-linux-gnu && \
-    make -j8 && \
+    make -j$(nproc) && \
     sudo make install && \
     cd .. && \
     rm -rf mpc-1.4.1 && \
@@ -91,7 +91,7 @@ RUN wget https://ftp.gnu.org/gnu/gcc/gcc-7.5.0/gcc-7.5.0.tar.xz && \
     cd gcc-7 && \
     ../gcc-7.5.0/configure --prefix=/usr/local/gcc7 --enable-languages=c,c++ \
     --disable-multilib --disable-libsanitizer && \
-    make -j8 && \
+    make -j$(nproc) && \
     sudo make install && \
     cd .. && \
     rm -rf gcc-7 && \
@@ -108,7 +108,7 @@ RUN wget https://ftp.gnu.org/gnu/gcc/gcc-8.5.0/gcc-8.5.0.tar.xz && \
     cd gcc-8 && \
     ../gcc-8.5.0/configure --prefix=/usr/local/gcc8 --enable-languages=c,c++ \
     --disable-multilib --disable-libsanitizer && \
-    make -j8 && \
+    make -j$(nproc) && \
     sudo make install && \
     cd .. && \
     rm -rf gcc-8 && \
