@@ -61,6 +61,9 @@ jobs:
           fetch-depth: 2
           submodules: false
 
+      - name: 'Setup sccache'
+        uses: mozilla-actions/sccache-action@v0.0.10
+
       - name: 'Install System Dependencies'
         run: |
           sudo apt-get update
@@ -68,27 +71,19 @@ jobs:
             clang-${{ env.LLVM_VERSION }} \
             llvm-${{ env.LLVM_VERSION }} \
             lld-${{ env.LLVM_VERSION }} \
-            ninja-build \
-            ccache
-
-      - name: 'Configure Compiler Cache (ccache)'
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ccache
-          key: ccache-libc-coverage-${{ runner.os }}-${{ github.sha }}
-          restore-keys: |
-            ccache-libc-coverage-${{ runner.os }}-main
-            ccache-libc-coverage-${{ runner.os }}-
+            ninja-build
 
       - name: 'Configure CMake Build System'
+        env:
+          SCCACHE_GHA_ENABLED: "true"
         run: |
           cmake -S llvm -B ${{ env.BUILD_DIR }} -G Ninja \
             -DLLVM_ENABLE_PROJECTS="${{ inputs.project_name || 'libc' }}" \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DCMAKE_C_COMPILER=clang-${{ env.LLVM_VERSION }} \
             -DCMAKE_CXX_COMPILER=clang++-${{ env.LLVM_VERSION }} \
-            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
-            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_C_COMPILER_LAUNCHER=sccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=sccache \
             -DCMAKE_C_FLAGS="-gsplit-dwarf -Wno-error" \
             -DCMAKE_CXX_FLAGS="-gsplit-dwarf -Wno-error" \
             -DLLVM_USE_LINKER=lld \
@@ -97,6 +92,8 @@ jobs:
             -DLLVM_LIBC_INCLUDE_EXHAUSTIVE_MATH_TESTS=OFF
 
       - name: 'Execute Tests & Merge Profiles'
+        env:
+          SCCACHE_GHA_ENABLED: "true"
         run: |
           set -euo pipefail
           echo "::group::Cleaning old profraw files"
@@ -107,9 +104,9 @@ jobs:
           echo "Selected Ninja target: $FALLBACK"
 
           echo "::group::Running libc test suite"
-          ccache --zero-stats
+          sccache --zero-stats
           ninja -C ${{ env.BUILD_DIR }} "$FALLBACK" || echo "::warning::Some tests failed, proceeding to coverage extraction"
-          ccache --show-stats
+          sccache --show-stats
           echo "::endgroup::"
 
           echo "::group::Merging profile data"
@@ -170,7 +167,13 @@ jobs:
               $CHANGED_FILES > coverage_source_map.tmp || true
 
             # 1. Execute and Print Patch Coverage Metrics (Highest Priority)
-            awk -f libc/utils/patch_coverage.awk coverage_git_diff.tmp coverage_source_map.tmp | tee delta_report.tmp >> $GITHUB_STEP_SUMMARY || true
+            # Export structured JSON AST from the compiler profiling data
+            llvm-cov-${{ env.LLVM_VERSION }} export "$FIRST_BIN" "${OBJECT_ARGS[@]}" \
+              -instr-profile=merged.profdata -format=text \
+              $CHANGED_FILES > coverage.json
+            
+            # Execute the mathematical Python intersection algorithm
+            python3 libc/utils/delta_coverage.py coverage_git_diff.tmp coverage.json | tee delta_report.tmp >> $GITHUB_STEP_SUMMARY || true
 
             # 2. Print Delta Coverage Source Map
             {
