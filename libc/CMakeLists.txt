@@ -95,6 +95,25 @@ if(LLVM_LIBC_ENABLE_COVERAGE)
   list(APPEND LIBC_COMPILE_OPTIONS_DEFAULT "-fprofile-instr-generate" "-fcoverage-mapping" "-fcoverage-mcdc")
   list(APPEND LIBC_TEST_COMPILE_OPTIONS_DEFAULT "-fprofile-instr-generate" "-fcoverage-mapping" "-fcoverage-mcdc")
   list(APPEND LIBC_TEST_LINK_OPTIONS_DEFAULT "-fprofile-instr-generate" "-fcoverage-mapping" "-fcoverage-mcdc")
+
+  # When building with -nostdlib, the compiler does not automatically link the profiling runtime.
+  # We must explicitly query the compiler for the exact architecture-specific profile library path.
+  execute_process(
+    COMMAND ${CMAKE_CXX_COMPILER} --print-libgcc-file-name --rtlib=compiler-rt
+    OUTPUT_VARIABLE COMPILER_RT_BUILTINS
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    RESULT_VARIABLE COMPILER_RT_RETURN_CODE
+  )
+  if(COMPILER_RT_RETURN_CODE EQUAL 0)
+    string(REPLACE "builtins" "profile" COMPILER_RT_PROFILE "${COMPILER_RT_BUILTINS}")
+    if(EXISTS "${COMPILER_RT_PROFILE}")
+      list(APPEND LIBC_TEST_LINK_OPTIONS_DEFAULT "${COMPILER_RT_PROFILE}")
+    else()
+      message(WARNING "Coverage profiling runtime not found at ${COMPILER_RT_PROFILE}")
+    endif()
+  else()
+    message(WARNING "Failed to locate compiler-rt builtins library for coverage")
+  endif()
 endif()
 
 # Check --print-resource-dir to find the compiler resource dir if this flag

@@ -100,7 +100,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "::group::Cleaning old profraw files"
-          find . -name "*.profraw" -delete
+          find ${{ env.BUILD_DIR }} -name "*.profraw" -delete || true
           echo "::endgroup::"
 
           FALLBACK="${{ inputs.fallback_target || 'check-libc' }}"
@@ -113,7 +113,7 @@ jobs:
           echo "::endgroup::"
 
           echo "::group::Merging profile data"
-          find . -name "*.profraw" > profraw.list
+          find ${{ env.BUILD_DIR }} -name "*.profraw" > profraw.list
           if [ ! -s profraw.list ]; then
             echo "::error::No profraw files generated! The atexit hook may have failed or no tests were executed."
             exit 1
