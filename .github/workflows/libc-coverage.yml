@@ -111,56 +111,63 @@ jobs:
             DIFF_RANGE="HEAD~1"
           fi
           CHANGED_FILES=$(git diff --name-only $DIFF_RANGE 2>/dev/null || true)
+          
+          if [ -z "$CHANGED_FILES" ]; then
+            echo "::notice::No files modified or diff failed. Skipping coverage."
+            echo "skip_coverage=true" >> $GITHUB_OUTPUT
+            
+            REPORT_MSG="## LLVM-libc Delta Coverage Report\n\n> [!NOTE]\n> **Coverage Validated:** No files modified in this commit."
+            echo -e "$REPORT_MSG" >> $GITHUB_STEP_SUMMARY
+            echo -e "$REPORT_MSG" > delta_report.tmp
+            exit 0
+          fi
 
           PROJECT="${{ inputs.project_name || 'libc' }}"
           FALLBACK="${{ inputs.fallback_target || 'check-libc' }}"
           SRCDIR="${{ inputs.source_dir || 'libc/src' }}"
 
-          CORE_CHANGE=0
-          if echo "$CHANGED_FILES" | grep -qE "^(${PROJECT}/test/UnitTest/|${SRCDIR}/__support/|${PROJECT}/CMakeLists.txt)|\.h$"; then
-            CORE_CHANGE=1
-          fi
-
           NINJA_TARGETS=()
-          if [ $CORE_CHANGE -eq 1 ] || [ -z "$CHANGED_FILES" ]; then
-            echo "Core framework or header modified. Executing fallback full suite."
-            NINJA_TARGETS=("$FALLBACK")
-          else
-            for file in $CHANGED_FILES; do
-              if [[ "$file" =~ ^${SRCDIR}/([^/]+)/(.*/)?([^/]+)\.cpp$ ]]; then
-                dir="${BASH_REMATCH[1]}"
-                func="${BASH_REMATCH[3]}"
-                
-                # Extract all matches, prioritize smoke tests to avoid exhaustive tests, fallback to first
-                ALL_MATCHES=$(ninja -C ${{ env.BUILD_DIR }} -t targets | grep -oE "^${PROJECT}\.test\.src\.${dir}\.([a-zA-Z0-9_]+\.)?${func}_test\.__unit__" || true)
-                FOUND_TARGET=$(echo "$ALL_MATCHES" | grep "\.smoke\." | head -n 1 | tr -d '\r\n ' || true)
-                if [ -z "$FOUND_TARGET" ]; then
-                  FOUND_TARGET=$(echo "$ALL_MATCHES" | head -n 1 | tr -d '\r\n ' || true)
-                fi
-                
-                if [ -n "$FOUND_TARGET" ]; then
+          
+          # Edge Case 3: Set IFS to newline to safely handle spaces in filenames
+          OLD_IFS=$IFS
+          IFS=$'\n'
+          for file in $CHANGED_FILES; do
+            if [[ "$file" =~ ^${SRCDIR}/([^/]+)/(.*/)?([^/]+)\.cpp$ ]]; then
+              dir="${BASH_REMATCH[1]}"
+              func="${BASH_REMATCH[3]}"
+              
+              # Edge Case 2: Use * instead of ? in the regex to support arbitrarily deep nested directories
+              ALL_MATCHES=$(ninja -C ${{ env.BUILD_DIR }} -t targets | grep -oE "^${PROJECT}\.test\.src\.${dir}\.([a-zA-Z0-9_]+\.)*${func}_test\.__unit__" || true)
+              FOUND_TARGET=$(echo "$ALL_MATCHES" | grep "\.smoke\." | head -n 1 | tr -d '\r\n ' || true)
+              if [ -z "$FOUND_TARGET" ]; then
+                FOUND_TARGET=$(echo "$ALL_MATCHES" | head -n 1 | tr -d '\r\n ' || true)
+              fi
+              
+              if [ -n "$FOUND_TARGET" ]; then
+                # Prevent duplicate targets from being added (idempotency)
+                if [[ ! " ${NINJA_TARGETS[@]} " =~ " ${FOUND_TARGET} " ]]; then
                   NINJA_TARGETS+=("$FOUND_TARGET")
-                else
-                  # Fallback to static guess if fuzzy match fails (the validation step will handle it if it doesn't exist)
-                  NINJA_TARGETS+=("${PROJECT}.test.src.${dir}.${func}_test.__unit__")
+                fi
+              else
+                # Fallback to static guess if fuzzy match fails
+                GUESS="${PROJECT}.test.src.${dir}.${func}_test.__unit__"
+                if [[ ! " ${NINJA_TARGETS[@]} " =~ " ${GUESS} " ]]; then
+                  NINJA_TARGETS+=("$GUESS")
                 fi
               fi
-            done
-          fi
+            fi
+          done
+          IFS=$OLD_IFS
 
           if [ ${#NINJA_TARGETS[@]} -eq 0 ]; then
-            if echo "$CHANGED_FILES" | grep -qE "\.(cpp|h|c|hpp)$"; then
-              NINJA_TARGETS=("$FALLBACK")
-            else
-              echo "No executable code modified. Triggering graceful exit."
-              echo "skip_coverage=true" >> $GITHUB_OUTPUT
-              
-              REPORT_MSG="## LLVM-libc Delta Coverage Report\n\n> [!NOTE]\n> **Coverage Validated:** No executable C/C++ lines were modified."
-              echo -e "$REPORT_MSG" >> $GITHUB_STEP_SUMMARY
-              echo -e "$REPORT_MSG" > delta_report.tmp
-              
-              exit 0
-            fi
+            echo "::notice::No targeted .cpp files modified. Skipping coverage."
+            echo "skip_coverage=true" >> $GITHUB_OUTPUT
+            
+            REPORT_MSG="## LLVM-libc Delta Coverage Report\n\n> [!NOTE]\n> **Coverage Validated:** No targeted C++ test binaries were affected."
+            echo -e "$REPORT_MSG" >> $GITHUB_STEP_SUMMARY
+            echo -e "$REPORT_MSG" > delta_report.tmp
+            
+            exit 0
           fi
           VALID_TARGETS=()
           for target in "${NINJA_TARGETS[@]}"; do
@@ -300,20 +307,9 @@ jobs:
             echo "::endgroup::"
           fi
 
-          echo "::group::Extracting Full Project Metrics"
-          # 3. Print Full Project Metrics (Lowest Priority)
-          echo "=== FULL LIBC COVERAGE METRICS ==="
-          {
-            echo "### Full LLVM-libc Coverage Metrics"
-            echo "<details>"
-            echo "<summary><b>Click to expand full project coverage</b></summary>"
-            echo ""
-            llvm-cov-${{ env.LLVM_VERSION }} report "$FIRST_BIN" "${OBJECT_ARGS[@]}" \
-              -instr-profile=merged.profdata \
-              -ignore-filename-regex=".*test.*" | python3 -c 'exec("import sys, re\nlines = [l.strip() for l in sys.stdin if l.strip() and not l.startswith(\"--\")]\nif not lines: sys.exit(0)\nheaders = re.split(r\"\\s{2,}\", lines[0])\nprint(\"| \" + \" | \".join(headers) + \" |\")\nprint(\"|\" + \"|\".join([\"---\"] * len(headers)) + \"|\")\nfor line in lines[1:]:\n    cols = re.split(r\"\\s{2,}\", line)\n    if not cols: continue\n    if cols[0] == \"TOTAL\": cols = [f\"**{c}**\" for c in cols]\n    else: cols[0] = f\"`{cols[0]}`\"\n    print(\"| \" + \" | \".join(cols) + \" |\")")'
-            echo ""
-            echo "</details>"
-          } | tee -a $GITHUB_STEP_SUMMARY
+          # Full project metrics table has been permanently removed by user request
+          echo "::group::Cleanup"
+          echo "Coverage extraction complete."
           echo "::endgroup::"
 
       - name: 'Publish Sticky PR Comment'
