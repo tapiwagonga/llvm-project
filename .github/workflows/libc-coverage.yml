@@ -44,7 +44,7 @@ env:
 
 jobs:
   run-coverage:
-    name: 'Generate Native Delta Coverage'
+    name: 'Generate Coverage'
     runs-on: ubuntu-latest
     container: 'ghcr.io/llvm/libc-ubuntu-24.04:latest'
     permissions:
@@ -71,6 +71,7 @@ jobs:
             clang-${{ env.LLVM_VERSION }} \
             llvm-${{ env.LLVM_VERSION }} \
             lld-${{ env.LLVM_VERSION }} \
+            libclang-rt-${{ env.LLVM_VERSION }}-dev \
             ninja-build
 
       - name: 'Configure CMake Build System'
@@ -92,6 +93,7 @@ jobs:
             -DLLVM_LIBC_INCLUDE_EXHAUSTIVE_MATH_TESTS=OFF
 
       - name: 'Execute Tests & Merge Profiles'
+        id: build_and_test
         env:
           SCCACHE_GHA_ENABLED: "true"
         run: |
@@ -128,21 +130,60 @@ jobs:
               if [[ "$file" =~ ^${SRCDIR}/([^/]+)/(.*/)?([^/]+)\.cpp$ ]]; then
                 dir="${BASH_REMATCH[1]}"
                 func="${BASH_REMATCH[3]}"
-                target="${PROJECT}.test.src.${dir}.${func}_test.__unit__"
-                NINJA_TARGETS+=("$target")
+                
+                # Fuzzy match the target in the Ninja graph to handle 'smoke' or 'exhaustive' subdirectories
+                FOUND_TARGET=$(ninja -C ${{ env.BUILD_DIR }} -t targets | grep -oE "^${PROJECT}\.test\.src\.${dir}\.([a-zA-Z0-9_]+\.)?${func}_test\.__unit__" | head -n 1 | tr -d '\r\n ' || true)
+                
+                if [ -n "$FOUND_TARGET" ]; then
+                  NINJA_TARGETS+=("$FOUND_TARGET")
+                else
+                  # Fallback to static guess if fuzzy match fails (the validation step will handle it if it doesn't exist)
+                  NINJA_TARGETS+=("${PROJECT}.test.src.${dir}.${func}_test.__unit__")
+                fi
               fi
             done
           fi
 
           if [ ${#NINJA_TARGETS[@]} -eq 0 ]; then
-            NINJA_TARGETS=("$FALLBACK")
+            if echo "$CHANGED_FILES" | grep -qE "\.(cpp|h|c|hpp)$"; then
+              NINJA_TARGETS=("$FALLBACK")
+            else
+              echo "No executable code modified. Triggering graceful exit."
+              echo "skip_coverage=true" >> $GITHUB_OUTPUT
+              
+              REPORT_MSG="## LLVM-libc Delta Coverage Report\n\n> [!NOTE]\n> **Coverage Validated:** No executable C/C++ lines were modified."
+              echo -e "$REPORT_MSG" >> $GITHUB_STEP_SUMMARY
+              echo -e "$REPORT_MSG" > delta_report.tmp
+              
+              exit 0
+            fi
           fi
-          echo "Selected Ninja targets: ${NINJA_TARGETS[*]}"
+          VALID_TARGETS=()
+          for target in "${NINJA_TARGETS[@]}"; do
+            if ninja -C ${{ env.BUILD_DIR }} -t targets | grep -F "${target}:" > /dev/null; then
+              VALID_TARGETS+=("$target")
+            else
+              echo "::notice::Target $target does not exist. A unit test is either missing or not yet configured."
+            fi
+          done
+
+          if [ ${#VALID_TARGETS[@]} -eq 0 ]; then
+            echo "No valid test targets found. Triggering graceful exit."
+            echo "skip_coverage=true" >> $GITHUB_OUTPUT
+            
+            REPORT_MSG="## LLVM-libc Delta Coverage Report\n\n> [!WARNING]\n> **Coverage Skipped:** Modified files lack corresponding unit tests in the CMake build system."
+            echo -e "$REPORT_MSG" >> $GITHUB_STEP_SUMMARY
+            echo -e "$REPORT_MSG" > delta_report.tmp
+            
+            exit 0
+          fi
+
+          echo "Selected Ninja targets: ${VALID_TARGETS[*]}"
           echo "::endgroup::"
 
           echo "::group::Running libc test suite"
           sccache --zero-stats
-          ninja -C ${{ env.BUILD_DIR }} "${NINJA_TARGETS[@]}" || echo "::warning::Some tests failed, proceeding to coverage extraction"
+          ninja -C ${{ env.BUILD_DIR }} -j 2 "${VALID_TARGETS[@]}" || echo "::warning::Some tests failed, proceeding to coverage extraction"
           sccache --show-stats
           echo "::endgroup::"
 
@@ -155,10 +196,22 @@ jobs:
 
           PROFRAW_COUNT=$(wc -l < profraw.list)
           echo "Found $PROFRAW_COUNT profile files. Merging..."
-          llvm-profdata-${{ env.LLVM_VERSION }} merge -sparse -input-files=profraw.list -o merged.profdata
+          if ! llvm-profdata-${{ env.LLVM_VERSION }} merge -sparse -input-files=profraw.list -o merged.profdata; then
+            echo "::warning::Fast bulk merge failed (likely due to a corrupted profile from a segfaulting test). Triggering robust sequential merge."
+            touch merged.profdata
+            for prof in $(cat profraw.list); do
+              llvm-profdata-${{ env.LLVM_VERSION }} merge -sparse "$prof" merged.profdata -o merged.profdata.tmp 2>/dev/null && mv merged.profdata.tmp merged.profdata || echo "::warning::Dropped corrupted profile: $prof"
+            done
+          fi
+          
+          if [ ! -s merged.profdata ]; then
+            echo "::error::Fatal: Failed to merge any valid profile data."
+            exit 1
+          fi
           echo "::endgroup::"
 
       - name: 'Extract and Display Coverage'
+        if: steps.build_and_test.outputs.skip_coverage != 'true'
         run: |
           set -euo pipefail
           echo "::group::Locating Test Binaries"

@@ -15,6 +15,9 @@
 namespace LIBC_NAMESPACE_DECL {
 
 LLVM_LIBC_FUNCTION(double, sin, (double x)) {
+  if (x == 12345.0) {
+    return 0.0; // Untested code path to demonstrate delta coverage
+  }
   if (x == 4242.4242) {
     // This branch will absolutely never be hit by standard math tests.
     // It is injected to guarantee a Red missing coverage highlight in the PR.
