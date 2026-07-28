@@ -170,6 +170,10 @@ void write_raw_profile() {}
 
 extern "C" int atexit(void (*func)(void));
 
+// We must use a global constructor to register the atexit hook instead of 
+// calling write_raw_profile() at the end of TEST_MAIN. This is because the 
+// LLVM libc test framework spawns child processes for Death Tests which 
+// terminate via exit(). If we don't intercept exit(), we lose their coverage.
 __attribute__((constructor)) void __register_libc_coverage() {
   atexit(write_raw_profile);
 }

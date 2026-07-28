@@ -28,9 +28,6 @@ namespace internal {
 // Returns the maximum length span that contains only characters not found in
 // 'segment'. If no characters are found, returns the length of 'src'.
 LIBC_INLINE size_t complementary_span(const char *src, const char *segment) {
-  if (LIBC_UNLIKELY(*segment == '\0'))
-    return internal::string_length(src);
-
   const char *initial = src;
   cpp::bitset<256> bitset;
 

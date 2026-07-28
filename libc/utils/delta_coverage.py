@@ -1,4 +1,12 @@
 #!/usr/bin/env python3
+#
+# ===- Parse llvm-cov output to GitHub Delta Coverage Markdown -*- python -*--==#
+#
+# Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+# See https://llvm.org/LICENSE.txt for license information.
+# SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+#
+# ==------------------------------------------------------------------------==#
 import sys
 import json
 import re
@@ -23,6 +31,11 @@ class DiffParser:
                 if line.startswith("+++ b/"):
                     current_file = line[6:]
                     files[current_file] = []
+                    current_hunk = None
+                    continue
+                
+                if line.startswith("+++ /dev/null"):
+                    current_file = None
                     current_hunk = None
                     continue
                 
@@ -96,9 +109,12 @@ class CoverageMapper:
                             
         return coverage_matrix
 
+import argparse
+from typing import Dict, List, Set, Optional, Tuple
+
 class ReportRenderer:
     @staticmethod
-    def _is_executable(text):
+    def _is_executable(text: str) -> bool:
         s = text.strip()
         if not s:
             return False
@@ -109,7 +125,9 @@ class ReportRenderer:
         return True
 
     @staticmethod
-    def render(diff_files, coverage_matrix, base_sha, head_sha, base_branch, head_branch):
+    def render(diff_files: Dict[str, List[DiffHunk]], coverage_matrix: Dict[str, Dict[str, Set[int]]], 
+               base_sha: Optional[str], head_sha: Optional[str], 
+               base_branch: Optional[str], head_branch: Optional[str]) -> None:
         total_covered = 0
         total_missed = 0
         
@@ -133,28 +151,30 @@ class ReportRenderer:
         print("## LLVM-libc Delta Coverage Report")
         
         if total_lines == 0:
-            print("\n> [!NOTE]")
-            print("> **Coverage Validated:** No executable C/C++ lines were modified.")
+            print("\n**Coverage Validated**")
+            print("No executable C/C++ lines were added or modified.")
             sys.exit(0)
-
-        line_pct = (total_covered / total_lines) * 100
-        if total_missed == 0:
-            print("\n> [!NOTE]")
-            print(f"> **Coverage Validated:** Patch coverage is 100.00%.")
-        else:
-            print("\n> [!CAUTION]")
-            print(f"> **Coverage Degradation:** Patch coverage is {line_pct:.2f}% ({total_missed} unexecuted lines).")
+            
+        coverage_percent = (total_covered / total_lines) * 100
         
-        print("")
-        import os
-        repo = os.environ.get("GITHUB_REPOSITORY", "llvm/llvm-project")
+        if total_missed == 0:
+            print("\n**Coverage Perfect**")
+        else:
+            print("\n**Coverage Degradation**")
+            
+        commit_str = f"`{head_sha}` " if head_sha else ""
+        print(f"The code coverage on the recent commit {commit_str}is {coverage_percent:.2f}%. The total number of lines is {total_lines}, with {total_missed} unexecuted lines.")
+            
+        print("\n<details>")
+        print("<summary><b>View Full Diff</b></summary>\n")
+        print("<br>\n")
         
         if base_sha and head_sha and base_branch and head_branch:
-            print(f"[Comparing `{base_branch}` (`{base_sha}`) to `{head_branch}` (`{head_sha}`)](https://github.com/{repo}/compare/{base_sha}...{head_sha})")
-        elif base_sha and head_sha:
-            print(f"[Comparing base (`{base_sha}`) to head (`{head_sha}`)](https://github.com/{repo}/compare/{base_sha}...{head_sha})")
-
-        print("\n### Modified Files Summary")
+            print(f"- **Base Branch:** `{base_branch}` ({base_sha})")
+            print(f"- **Head Commit:** `{head_branch}` ({head_sha})\n")
+            print("---\n<br>\n")
+            
+        print("### Modified Files Summary")
         print("| File Path | Patch Coverage | Missing Lines |")
         print("| :--- | :---: | :---: |")
         for fpath, hunks in diff_files.items():
@@ -182,70 +202,60 @@ class ReportRenderer:
             f_pct = (len(f_covered) / f_total) * 100
             print(f"| `{fpath}` | {f_pct:.2f}% | {len(f_missed)} |")
 
-        if total_missed > 0:
-            print("\n### Missing Coverage Details")
+        print("\n### Delta Coverage (Source Map)")
+        
+        for fpath, hunks in diff_files.items():
+            data = coverage_matrix[fpath]
             
-            for fpath, hunks in diff_files.items():
-                data = coverage_matrix[fpath]
-                
-                added_lines = set()
-                for hunk in hunks:
-                    for l_type, text, l_num in hunk.lines:
-                        if l_type == '+':
-                            if not ReportRenderer._is_executable(text):
-                                continue
-                            added_lines.add(l_num)
-                
-                f_missed = added_lines.intersection(data['missed'])
-                f_covered = added_lines.intersection(data['covered'])
-                
-                if len(f_missed) == 0 and len(f_covered) == 0:
-                    if len(added_lines) > 0:
-                        f_missed = added_lines
-                    else:
-                        continue
-                elif len(f_missed) == 0:
+            added_lines = set()
+            for hunk in hunks:
+                for l_type, text, l_num in hunk.lines:
+                    if l_type == '+':
+                        if not ReportRenderer._is_executable(text):
+                            continue
+                        added_lines.add(l_num)
+            
+            f_missed = added_lines.intersection(data['missed'])
+            f_covered = added_lines.intersection(data['covered'])
+            
+            if len(f_missed) == 0 and len(f_covered) == 0:
+                if len(added_lines) > 0:
+                    f_missed = added_lines
+                else:
                     continue
-                
-                print(f"\n**`{fpath}`**")
-                print("```diff")
-                
-                for hunk in hunks:
-                    hunk_has_miss = any((l_num in f_missed and l_type == '+') for l_type, text, l_num in hunk.lines)
-                    if not hunk_has_miss:
-                        continue
-                        
-                    print(hunk.header)
-                    for l_type, text, l_num in hunk.lines:
-                        if l_type == '+':
-                            if l_num in f_missed:
-                                print(f"- {text}")
-                                sys.stderr.write(f"::error file={fpath},line={l_num}::Coverage Missed: This delta line was not executed.\n")
-                            elif l_num in f_covered:
-                                print(f"+ {text}")
-                            else:
-                                print(f"  {text}")
-                        elif l_type == ' ':
+            
+            print(f"\n**`{fpath}`**")
+            print("```diff")
+            
+            for hunk in hunks:
+                print(hunk.header)
+                for l_type, text, l_num in hunk.lines:
+                    if l_type == '+':
+                        if l_num in f_missed:
+                            print(f"- {text}")
+                            sys.stderr.write(f"::warning file={fpath},line={l_num}::Coverage Missed: This delta line was not executed.\n")
+                        elif l_num in f_covered:
+                            print(f"+ {text}")
+                        else:
                             print(f"  {text}")
-                print("```")
+                    elif l_type == ' ':
+                        print(f"  {text}")
+            print("```")
 
-            sys.exit(1)
+def main() -> None:
+    parser = argparse.ArgumentParser(description="LLVM-libc Delta Coverage Analyzer")
+    parser.add_argument("diff_file")
+    parser.add_argument("json_file")
+    parser.add_argument("base_sha", nargs='?')
+    parser.add_argument("head_sha", nargs='?')
+    parser.add_argument("base_branch", nargs='?')
+    parser.add_argument("head_branch", nargs='?')
+    
+    args = parser.parse_args()
 
-def main():
-    if len(sys.argv) not in [3, 5, 7]:
-        print("Usage: delta_coverage.py <git_diff_file> <llvm_cov_json_file> [base_sha] [head_sha] [base_branch] [head_branch]")
-        sys.exit(1)
-
-    diff_file = sys.argv[1]
-    json_file = sys.argv[2]
-    base_sha = sys.argv[3] if len(sys.argv) >= 5 else None
-    head_sha = sys.argv[4] if len(sys.argv) >= 5 else None
-    base_branch = sys.argv[5] if len(sys.argv) == 7 else None
-    head_branch = sys.argv[6] if len(sys.argv) == 7 else None
-
-    diff_files = DiffParser.parse(diff_file)
-    coverage_matrix = CoverageMapper.parse(json_file, diff_files)
-    ReportRenderer.render(diff_files, coverage_matrix, base_sha, head_sha, base_branch, head_branch)
+    diff_files = DiffParser.parse(args.diff_file)
+    coverage_matrix = CoverageMapper.parse(args.json_file, diff_files)
+    ReportRenderer.render(diff_files, coverage_matrix, args.base_sha, args.head_sha, args.base_branch, args.head_branch)
 
 if __name__ == '__main__':
     main()

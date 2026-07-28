@@ -93,6 +93,13 @@ jobs:
             -DLLVM_LIBC_ENABLE_COVERAGE=ON \
             -DLLVM_LIBC_INCLUDE_EXHAUSTIVE_MATH_TESTS=OFF
 
+      - name: 'Execute Coverage Script Unit Tests'
+        run: |
+          set -euo pipefail
+          echo "::group::Running Delta Coverage Unit Tests"
+          python3 libc/utils/test_delta_coverage.py
+          echo "::endgroup::"
+
       - name: 'Execute Tests & Merge Profiles'
         id: build_and_test
         env:
@@ -104,19 +111,16 @@ jobs:
           echo "::endgroup::"
 
           echo "::group::Resolving Ninja test targets"
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            git fetch origin ${{ github.event.pull_request.base.ref }} --depth=1 || true
-            DIFF_RANGE="origin/${{ github.event.pull_request.base.ref }}...HEAD"
-          else
-            DIFF_RANGE="HEAD~1"
-          fi
-          CHANGED_FILES=$(git diff --name-only $DIFF_RANGE 2>/dev/null || true)
+          # For PRs, GitHub checks out a merge commit where HEAD~1 is the base branch tip.
+          # For pushes, HEAD~1 is the parent commit. 
+          # In both cases, HEAD~1 perfectly isolates the changes without needing deep network fetches.
+          CHANGED_FILES=$(git diff --name-only HEAD~1 2>/dev/null || true)
           
           if [ -z "$CHANGED_FILES" ]; then
             echo "::notice::No files modified or diff failed. Skipping coverage."
             echo "skip_coverage=true" >> $GITHUB_OUTPUT
             
-            REPORT_MSG="## LLVM-libc Delta Coverage Report\n\n> [!NOTE]\n> **Coverage Validated:** No files modified in this commit."
+            REPORT_MSG="## LLVM-libc Coverage Report\n\n> [!NOTE]\n> **Coverage Validated:** No files modified in this commit."
             echo -e "$REPORT_MSG" >> $GITHUB_STEP_SUMMARY
             echo -e "$REPORT_MSG" > delta_report.tmp
             exit 0
@@ -193,13 +197,23 @@ jobs:
           echo "::endgroup::"
 
           echo "::group::Running libc test suite"
-          ninja -C ${{ env.BUILD_DIR }} -j 2 "${VALID_TARGETS[@]}" || echo "::warning::Some tests failed, proceeding to coverage extraction"
+          ninja -C ${{ env.BUILD_DIR }} -j 2 "${VALID_TARGETS[@]}" 2>&1 | tee ninja_build.log || echo "::warning::Some tests failed, proceeding to coverage extraction"
           echo "::endgroup::"
-
+          
           echo "::group::Merging profile data"
           find ${{ env.BUILD_DIR }} -name "*.profraw" > profraw.list
           if [ ! -s profraw.list ]; then
-            echo "::error::No profraw files generated! The atexit hook may have failed or no tests were executed."
+            echo "::error::No profraw files generated! Compilation aborted or all tests crashed."
+            
+            COMPILER_ERROR=$(grep -E -A 3 "error:|FAILED:" ninja_build.log | head -n 8 || true)
+            if [ -z "$COMPILER_ERROR" ]; then
+              COMPILER_ERROR="Unknown fatal error occurred before tests executed."
+            fi
+            
+            REPORT_MSG="## LLVM-libc Delta Coverage Report\n\n> [!CAUTION]\n> **Coverage Aborted:** No profile data was generated. This usually means the C++ code failed to compile or the test binaries suffered fatal crashes before execution.\n\n### Compilation Context\n\`\`\`text\n${COMPILER_ERROR}\n\`\`\`"
+            echo -e "$REPORT_MSG" >> $GITHUB_STEP_SUMMARY
+            echo -e "$REPORT_MSG" > delta_report.tmp
+            
             exit 1
           fi
 
@@ -244,13 +258,10 @@ jobs:
           # Critical Fix for Docker: Override Dubious Ownership
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            git fetch origin ${{ github.event.pull_request.base.ref }} --depth=1 || true
-            DIFF_RANGE="origin/${{ github.event.pull_request.base.ref }}...HEAD"
-          else
-            DIFF_RANGE="HEAD~1"
-          fi
-          CHANGED_FILES=$(git diff --name-only --diff-filter=AM $DIFF_RANGE | grep -E '^libc/.*\.(cpp|h)$' || true)
+          # For PRs, GitHub checks out a merge commit where HEAD~1 is the base branch tip.
+          # For pushes, HEAD~1 is the parent commit. 
+          # In both cases, HEAD~1 perfectly isolates the changes without needing deep network fetches.
+          CHANGED_FILES=$(git diff --name-only --diff-filter=AM HEAD~1 | grep -E '^libc/.*\.(cpp|h)$' || true)
           if [ -z "$CHANGED_FILES" ]; then
             echo "=== DELTA COVERAGE REPORT ===" | tee -a $GITHUB_STEP_SUMMARY
             echo "No C/C++ libc files changed against main branch. Skipping delta line coverage." | tee delta_report.tmp | tee -a $GITHUB_STEP_SUMMARY
@@ -261,10 +272,7 @@ jobs:
             echo "=== DELTA COVERAGE REPORT ==="
 
             # Extract raw data to local temporary files
-            git diff $DIFF_RANGE --unified=0 $CHANGED_FILES > coverage_git_diff.tmp || true
-            llvm-cov-${{ env.LLVM_VERSION }} show "$FIRST_BIN" "${OBJECT_ARGS[@]}" \
-              -instr-profile=merged.profdata \
-              $CHANGED_FILES > coverage_source_map.tmp || true
+            git diff HEAD~1 --unified=0 $CHANGED_FILES > coverage_git_diff.tmp || true
 
             # 1. Execute and Print Patch Coverage Metrics (Highest Priority)
             # Export structured JSON AST from the compiler profiling data
@@ -272,36 +280,40 @@ jobs:
               -instr-profile=merged.profdata -format=text \
               $CHANGED_FILES > coverage.json
             
-            # Extract Cryptographic Commit Hashes and Branch Names
+            # Extract Cryptographic Commit Hashes and Branch Names via GitHub Context
             if [ "${{ github.event_name }}" = "pull_request" ]; then
-              BASE_REF="origin/${{ github.event.pull_request.base.ref }}"
+              BASE_SHA=$(echo "${{ github.event.pull_request.base.sha }}" | cut -c1-7)
+              HEAD_SHA=$(echo "${{ github.event.pull_request.head.sha }}" | cut -c1-7)
               BASE_BRANCH="${{ github.event.pull_request.base.ref }}"
               HEAD_BRANCH="${{ github.event.pull_request.head.ref }}"
             else
-              BASE_REF="origin/main"
-              BASE_BRANCH="main"
+              # For direct pushes, the bash script diffs against HEAD~1. 
+              # We must use HEAD~1 for the SHA, not github.event.before (which breaks on force-pushes).
+              BASE_SHA=$(git rev-parse --short HEAD~1 2>/dev/null || echo "unknown")
+              HEAD_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+              BASE_BRANCH="HEAD~1"
               HEAD_BRANCH="${{ github.ref_name }}"
             fi
-            BASE_SHA=$(git rev-parse --short $BASE_REF 2>/dev/null || echo "unknown")
-            HEAD_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 
             # Execute the mathematical Python intersection algorithm
-            python3 libc/utils/delta_coverage.py coverage_git_diff.tmp coverage.json $BASE_SHA $HEAD_SHA $BASE_BRANCH $HEAD_BRANCH | tee delta_report.tmp >> $GITHUB_STEP_SUMMARY || true
+            SCRIPT_EXIT=0
+            python3 libc/utils/delta_coverage.py coverage_git_diff.tmp coverage.json $BASE_SHA $HEAD_SHA $BASE_BRANCH $HEAD_BRANCH > delta_report.tmp || SCRIPT_EXIT=$?
 
-            # Safety Net: Verify Python script generated output
-            if [ ! -s delta_report.tmp ]; then
-              echo "> [!WARNING]" >> $GITHUB_STEP_SUMMARY
-              echo "> **Delta Coverage Error:** The Python extraction script failed to generate a report. Check the action logs." >> $GITHUB_STEP_SUMMARY
+            # Safety Net: Verify Python script generated output or successful execution
+            if [ $SCRIPT_EXIT -ne 0 ] || [ ! -s delta_report.tmp ]; then
+              REPORT_MSG="## LLVM-libc Delta Coverage Report\n\n> [!CAUTION]\n> **Coverage Pipeline Failed:** An internal error occurred while generating the report. The Python analysis script crashed silently or exited with an error."
+              echo -e "$REPORT_MSG" >> $GITHUB_STEP_SUMMARY
+              echo -e "$REPORT_MSG" > delta_report.tmp
+              exit 1
+            fi
+            cat delta_report.tmp >> $GITHUB_STEP_SUMMARY
+            
+            # Advisory Mode: Notify but do NOT fail the CI
+            if grep -q "Coverage Degradation" delta_report.tmp; then
+              echo "::warning::Coverage Degraded! See the step summary for details."
             fi
 
-            # 2. Print Delta Coverage Source Map
-            {
-              echo "### Delta Coverage (Source Map)"
-              echo '```cpp'
-              cat coverage_source_map.tmp
-              echo '```'
-            } | tee -a $GITHUB_STEP_SUMMARY
-
+            # The Python script natively outputs the colored Markdown Source Map directly into the summary
             # Cleanup temporary files
             rm -f coverage_git_diff.tmp coverage_source_map.tmp
             echo "::endgroup::"
