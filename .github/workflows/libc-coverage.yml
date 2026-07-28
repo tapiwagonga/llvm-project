@@ -310,22 +310,7 @@ jobs:
             echo ""
             llvm-cov-${{ env.LLVM_VERSION }} report "$FIRST_BIN" "${OBJECT_ARGS[@]}" \
               -instr-profile=merged.profdata \
-              -ignore-filename-regex=".*test.*" | python3 -c '
-import sys, re
-lines = [l.strip() for l in sys.stdin if l.strip() and not l.startswith("--")]
-if not lines: sys.exit(0)
-headers = re.split(r"\s{2,}", lines[0])
-print("| " + " | ".join(headers) + " |")
-print("|" + "|".join(["---"] * len(headers)) + "|")
-for line in lines[1:]:
-    cols = re.split(r"\s{2,}", line)
-    if not cols: continue
-    if cols[0] == "TOTAL":
-        cols = [f"**{c}**" for c in cols]
-    else:
-        cols[0] = f"`{cols[0]}`"
-    print("| " + " | ".join(cols) + " |")
-'
+              -ignore-filename-regex=".*test.*" | python3 -c 'exec("import sys, re\nlines = [l.strip() for l in sys.stdin if l.strip() and not l.startswith(\"--\")]\nif not lines: sys.exit(0)\nheaders = re.split(r\"\\s{2,}\", lines[0])\nprint(\"| \" + \" | \".join(headers) + \" |\")\nprint(\"|\" + \"|\".join([\"---\"] * len(headers)) + \"|\")\nfor line in lines[1:]:\n    cols = re.split(r\"\\s{2,}\", line)\n    if not cols: continue\n    if cols[0] == \"TOTAL\": cols = [f\"**{c}**\" for c in cols]\n    else: cols[0] = f\"`{cols[0]}`\"\n    print(\"| \" + \" | \".join(cols) + \" |\")")'
             echo ""
             echo "</details>"
           } | tee -a $GITHUB_STEP_SUMMARY

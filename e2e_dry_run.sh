@@ -3,8 +3,8 @@ set -euo pipefail
 
 echo "=== E2E DRY RUN: TARGET ISOLATION ==="
 # Simulate git diff for unstaged changes + last commit
-git diff HEAD~1 > dry_run.patch
-CHANGED_FILES=$(git diff HEAD~1 --name-only)
+git diff HEAD~4 > dry_run.patch
+CHANGED_FILES=$(git diff HEAD~4 --name-only)
 
 echo "Changed Files Detected:"
 echo "$CHANGED_FILES"
