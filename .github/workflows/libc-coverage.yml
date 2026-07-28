@@ -61,8 +61,11 @@ jobs:
           fetch-depth: 2
           submodules: false
 
-      - name: 'Setup sccache'
-        uses: mozilla-actions/sccache-action@v0.0.10
+      - name: 'Setup ccache'
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ runner.os }}-ccache-${{ github.sha }}
+          restore-keys: ${{ runner.os }}-ccache-
 
       - name: 'Install System Dependencies'
         run: |
@@ -75,16 +78,14 @@ jobs:
             ninja-build
 
       - name: 'Configure CMake Build System'
-        env:
-          SCCACHE_GHA_ENABLED: "true"
         run: |
           cmake -S llvm -B ${{ env.BUILD_DIR }} -G Ninja \
             -DLLVM_ENABLE_PROJECTS="${{ inputs.project_name || 'libc' }}" \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_C_COMPILER=clang-${{ env.LLVM_VERSION }} \
             -DCMAKE_CXX_COMPILER=clang++-${{ env.LLVM_VERSION }} \
-            -DCMAKE_C_COMPILER_LAUNCHER=sccache \
-            -DCMAKE_CXX_COMPILER_LAUNCHER=sccache \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DCMAKE_C_FLAGS="-O1 -gline-tables-only -Wno-error" \
             -DCMAKE_CXX_FLAGS="-O1 -gline-tables-only -Wno-error" \
             -DLLVM_USE_LINKER=lld \
@@ -304,7 +305,8 @@ jobs:
           echo "=== FULL LIBC COVERAGE METRICS ==="
           {
             echo "### Full LLVM-libc Coverage Metrics"
-            echo "<details><summary><b>Click to expand full project coverage</b></summary>"
+            echo "<details>"
+            echo "<summary><b>Click to expand full project coverage</b></summary>"
             echo ""
             llvm-cov-${{ env.LLVM_VERSION }} report "$FIRST_BIN" "${OBJECT_ARGS[@]}" \
               -instr-profile=merged.profdata \
@@ -354,9 +356,4 @@ jobs:
 
       - name: 'Workspace Teardown'
         if: always()
-        run: |
-          rm -rf ${{ env.BUILD_DIR }} *.tmp
-          # Redirect the GitHub Step Summary to a dummy file before the sccache-action's 
-          # post-run step executes, preventing it from polluting the UI with cache stats.
-          touch /tmp/dummy_summary
-          echo "GITHUB_STEP_SUMMARY=/tmp/dummy_summary" >> $GITHUB_ENV
+        run: rm -rf ${{ env.BUILD_DIR }} *.tmp
