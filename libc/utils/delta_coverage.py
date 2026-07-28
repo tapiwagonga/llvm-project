@@ -5,12 +5,16 @@ import re
 import linecache
 
 def main():
-    if len(sys.argv) != 3:
-        print("Usage: delta_coverage.py <git_diff_file> <llvm_cov_json_file>")
+    if len(sys.argv) not in [3, 5, 7]:
+        print("Usage: delta_coverage.py <git_diff_file> <llvm_cov_json_file> [base_sha] [head_sha] [base_branch] [head_branch]")
         sys.exit(1)
 
     diff_file = sys.argv[1]
     json_file = sys.argv[2]
+    base_sha = sys.argv[3] if len(sys.argv) >= 5 else None
+    head_sha = sys.argv[4] if len(sys.argv) >= 5 else None
+    base_branch = sys.argv[5] if len(sys.argv) == 7 else None
+    head_branch = sys.argv[6] if len(sys.argv) == 7 else None
 
     # 1. Parse unified diff to extract modified lines
     changed = {}
@@ -153,38 +157,54 @@ def main():
     print("### LLVM-libc Delta Coverage Report")
     
     if total_lines == 0:
-        print("No executable C/C++ lines were modified in this PR.")
+        print("\n**Status:** [PASS] No executable C/C++ lines were modified.")
         sys.exit(0)
 
-    line_pct = (covered_lines / total_lines) * 100 if total_lines > 0 else 100.0
-    print(f"**Line Coverage:** {line_pct:.2f}% ({covered_lines}/{total_lines})")
+    line_pct = (covered_lines / total_lines) * 100
+    if missed_lines == 0 and mcdc_missed_count == 0:
+        print(f"\n**Status:** [PASS] Patch coverage is 100.00%.")
+    else:
+        print(f"\n**Status:** [WARNING] Patch coverage is {line_pct:.2f}% with {missed_lines} lines missing coverage.")
     
+    if base_sha and head_sha and base_branch and head_branch:
+        print(f"**Context:** Comparing `{base_branch}` (`{base_sha}`) to `{head_branch}` (`{head_sha}`).")
+    elif base_sha and head_sha:
+        print(f"**Context:** Comparing base (`{base_sha}`) to head (`{head_sha}`).")
+
+    print(f"\n**Line Coverage:** {line_pct:.2f}% ({covered_lines}/{total_lines})")
     if total_mcdc > 0:
         mcdc_pct = (mcdc_covered_count / total_mcdc) * 100
         print(f"**MC/DC Coverage:** {mcdc_pct:.2f}% ({mcdc_covered_count}/{total_mcdc})")
 
-    if missed_lines > 0 or mcdc_missed_count > 0:
-        print("\n#### Uncovered Lines (Delta Only)")
-        for ml in missed_line_details:
-            print(ml)
-        for ml in mcdc_missed_details:
-            print(ml)
+    # Tier 2: File Summary Matrix
+    print("\n#### Modified Files Summary")
+    print("| File Path | Patch Coverage | Missing Lines |")
+    print("| :--- | :---: | :---: |")
+    for fpath, data in file_diff_data.items():
+        f_covered = len(data['covered'])
+        f_missed = len(data['missed'])
+        f_total = f_covered + f_missed
+        if f_total == 0:
+            continue
+        f_pct = (f_covered / f_total) * 100
+        print(f"| `{fpath}` | {f_pct:.2f}% | {f_missed} |")
 
-    if file_diff_data:
-        print("\n#### Source Line Evaluation")
+    # Tier 3: Source Line Evidence
+    if missed_lines > 0 or mcdc_missed_count > 0:
+        print("\n#### Missing Coverage Details")
         for fpath, data in file_diff_data.items():
-            if not data['covered'] and not data['missed']:
+            if len(data['missed']) == 0:
                 continue
             
-            print(f"**`{fpath}`**\n```diff")
-            for l in sorted(data['covered'] + data['missed']):
+            print(f"\n**`{fpath}`**\n```diff")
+            sorted_lines = sorted(data['covered'] + data['missed'])
+            for l in sorted_lines:
                 text = linecache.getline(fpath, l).rstrip('\n')
                 if text:
                     prefix = "+" if l in data['covered'] else "-"
                     print(f"{prefix} {l:4d} | {text}")
-            print("```\n")
+            print("```")
 
-    if missed_lines > 0 or mcdc_missed_count > 0:
         sys.exit(1)
 
 if __name__ == '__main__':

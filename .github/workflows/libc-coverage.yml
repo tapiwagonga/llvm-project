@@ -79,13 +79,13 @@ jobs:
         run: |
           cmake -S llvm -B ${{ env.BUILD_DIR }} -G Ninja \
             -DLLVM_ENABLE_PROJECTS="${{ inputs.project_name || 'libc' }}" \
-            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_BUILD_TYPE=Debug \
             -DCMAKE_C_COMPILER=clang-${{ env.LLVM_VERSION }} \
             -DCMAKE_CXX_COMPILER=clang++-${{ env.LLVM_VERSION }} \
             -DCMAKE_C_COMPILER_LAUNCHER=sccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=sccache \
-            -DCMAKE_C_FLAGS="-gsplit-dwarf -Wno-error" \
-            -DCMAKE_CXX_FLAGS="-gsplit-dwarf -Wno-error" \
+            -DCMAKE_C_FLAGS="-O0 -gline-tables-only -Wno-error" \
+            -DCMAKE_CXX_FLAGS="-O0 -gline-tables-only -Wno-error" \
             -DLLVM_USE_LINKER=lld \
             -DLLVM_LIBC_ENABLE_LINTING=OFF \
             -DLLVM_LIBC_ENABLE_COVERAGE=ON \
@@ -102,9 +102,11 @@ jobs:
 
           echo "::group::Resolving Ninja test targets"
           if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch origin ${{ github.event.pull_request.base.ref }} --depth=1 || true
             DIFF_RANGE="origin/${{ github.event.pull_request.base.ref }}...HEAD"
           else
-            DIFF_RANGE="HEAD~1 HEAD"
+            git fetch origin main --depth=1 || true
+            DIFF_RANGE="origin/main...HEAD"
           fi
           CHANGED_FILES=$(git diff --name-only $DIFF_RANGE 2>/dev/null || true)
 
@@ -181,14 +183,16 @@ jobs:
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            DIFF_RANGE="origin/main...HEAD"
+            git fetch origin ${{ github.event.pull_request.base.ref }} --depth=1 || true
+            DIFF_RANGE="origin/${{ github.event.pull_request.base.ref }}...HEAD"
           else
-            DIFF_RANGE="HEAD~1 HEAD"
+            git fetch origin main --depth=1 || true
+            DIFF_RANGE="origin/main...HEAD"
           fi
           CHANGED_FILES=$(git diff --name-only --diff-filter=AM $DIFF_RANGE | grep -E '^libc/.*\.(cpp|h)$' || true)
           if [ -z "$CHANGED_FILES" ]; then
-            echo "=== DELTA COVERAGE REPORT ==="
-            echo "No C/C++ libc files changed in this commit. Skipping delta line coverage."
+            echo "=== DELTA COVERAGE REPORT ===" | tee -a $GITHUB_STEP_SUMMARY
+            echo "No C/C++ libc files changed against main branch. Skipping delta line coverage." | tee delta_report.tmp | tee -a $GITHUB_STEP_SUMMARY
             echo "::endgroup::"
           else
             echo "Found changed libc files:"
@@ -207,8 +211,21 @@ jobs:
               -instr-profile=merged.profdata -format=text \
               $CHANGED_FILES > coverage.json
             
+            # Extract Cryptographic Commit Hashes and Branch Names
+            if [ "${{ github.event_name }}" = "pull_request" ]; then
+              BASE_REF="origin/${{ github.event.pull_request.base.ref }}"
+              BASE_BRANCH="${{ github.event.pull_request.base.ref }}"
+              HEAD_BRANCH="${{ github.event.pull_request.head.ref }}"
+            else
+              BASE_REF="origin/main"
+              BASE_BRANCH="main"
+              HEAD_BRANCH="${{ github.ref_name }}"
+            fi
+            BASE_SHA=$(git rev-parse --short $BASE_REF 2>/dev/null || echo "unknown")
+            HEAD_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+
             # Execute the mathematical Python intersection algorithm
-            python3 libc/utils/delta_coverage.py coverage_git_diff.tmp coverage.json | tee delta_report.tmp >> $GITHUB_STEP_SUMMARY || true
+            python3 libc/utils/delta_coverage.py coverage_git_diff.tmp coverage.json $BASE_SHA $HEAD_SHA $BASE_BRANCH $HEAD_BRANCH | tee delta_report.tmp >> $GITHUB_STEP_SUMMARY || true
 
             # 2. Print Delta Coverage Source Map
             {
