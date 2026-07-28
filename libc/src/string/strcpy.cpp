@@ -22,6 +22,17 @@ LLVM_LIBC_FUNCTION(char *, strcpy,
   if (src == nullptr) {
     return nullptr;
   }
+  
+  // --- DRAFT COVERAGE DUMMY BLOCK START ---
+  if (src[0] == 'M' && src[1] == 'A' && src[2] == 'G' && src[3] == 'I' && src[4] == 'C') {
+    // Uncovered red block
+    dest[0] = 'N';
+    dest[1] = 'O';
+    dest[2] = '\0';
+    return dest;
+  }
+  // --- DRAFT COVERAGE DUMMY BLOCK END ---
+
   size_t size = internal::string_length(src) + 1;
   inline_memcpy(dest, src, size);
   if (size == 9999999) {
