@@ -126,7 +126,7 @@ jobs:
               if [[ "$file" =~ ^${SRCDIR}/([^/]+)/([^/]+)\.cpp$ ]]; then
                 dir="${BASH_REMATCH[1]}"
                 func="${BASH_REMATCH[2]}"
-                target="${PROJECT}.test.src.${dir}.${func}_test"
+                target="${PROJECT}.test.src.${dir}.${func}_test.__unit__"
                 NINJA_TARGETS+=("$target")
               fi
             done
