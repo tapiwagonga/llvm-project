@@ -146,10 +146,13 @@ class ReportRenderer:
             print(f"> **Coverage Degradation:** Patch coverage is {line_pct:.2f}% ({total_missed} unexecuted lines).")
         
         print("")
+        import os
+        repo = os.environ.get("GITHUB_REPOSITORY", "llvm/llvm-project")
+        
         if base_sha and head_sha and base_branch and head_branch:
-            print(f"**Context:** Comparing `{base_branch}` (`{base_sha}`) to `{head_branch}` (`{head_sha}`).")
+            print(f"[Comparing `{base_branch}` (`{base_sha}`) to `{head_branch}` (`{head_sha}`)](https://github.com/{repo}/compare/{base_sha}...{head_sha})")
         elif base_sha and head_sha:
-            print(f"**Context:** Comparing base (`{base_sha}`) to head (`{head_sha}`).")
+            print(f"[Comparing base (`{base_sha}`) to head (`{head_sha}`)](https://github.com/{repo}/compare/{base_sha}...{head_sha})")
 
         print("\n### Modified Files Summary")
         print("| File Path | Patch Coverage | Missing Lines |")
@@ -181,7 +184,6 @@ class ReportRenderer:
 
         if total_missed > 0:
             print("\n### Missing Coverage Details")
-            print("> **Legend:** Red (`-`) indicates unexecuted lines. Green (`+`) indicates executed lines.")
             
             for fpath, hunks in diff_files.items():
                 data = coverage_matrix[fpath]

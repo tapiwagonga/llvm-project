@@ -185,9 +185,7 @@ jobs:
           echo "::endgroup::"
 
           echo "::group::Running libc test suite"
-          sccache --zero-stats
           ninja -C ${{ env.BUILD_DIR }} -j 2 "${VALID_TARGETS[@]}" || echo "::warning::Some tests failed, proceeding to coverage extraction"
-          sccache --show-stats
           echo "::endgroup::"
 
           echo "::group::Merging profile data"
@@ -356,4 +354,9 @@ jobs:
 
       - name: 'Workspace Teardown'
         if: always()
-        run: rm -rf ${{ env.BUILD_DIR }} *.tmp
+        run: |
+          rm -rf ${{ env.BUILD_DIR }} *.tmp
+          # Redirect the GitHub Step Summary to a dummy file before the sccache-action's 
+          # post-run step executes, preventing it from polluting the UI with cache stats.
+          touch /tmp/dummy_summary
+          echo "GITHUB_STEP_SUMMARY=/tmp/dummy_summary" >> $GITHUB_ENV
