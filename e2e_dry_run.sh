@@ -29,7 +29,11 @@ else
       dir="${BASH_REMATCH[1]}"
       func="${BASH_REMATCH[3]}"
       
-      FOUND_TARGET=$(ninja -C $BUILD_DIR -t targets | grep -oE "^${PROJECT}\.test\.src\.${dir}\.([a-zA-Z0-9_]+\.)?${func}_test\.__unit__" | head -n 1 | tr -d '\r\n ' || true)
+      ALL_MATCHES=$(ninja -C $BUILD_DIR -t targets | grep -oE "^${PROJECT}\.test\.src\.${dir}\.([a-zA-Z0-9_]+\.)?${func}_test\.__unit__" || true)
+      FOUND_TARGET=$(echo "$ALL_MATCHES" | grep "\.smoke\." | head -n 1 | tr -d '\r\n ' || true)
+      if [ -z "$FOUND_TARGET" ]; then
+        FOUND_TARGET=$(echo "$ALL_MATCHES" | head -n 1 | tr -d '\r\n ' || true)
+      fi
       
       if [ -n "$FOUND_TARGET" ]; then
         NINJA_TARGETS+=("$FOUND_TARGET")

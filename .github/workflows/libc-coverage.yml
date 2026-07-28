@@ -107,8 +107,7 @@ jobs:
             git fetch origin ${{ github.event.pull_request.base.ref }} --depth=1 || true
             DIFF_RANGE="origin/${{ github.event.pull_request.base.ref }}...HEAD"
           else
-            git fetch origin main --depth=1 || true
-            DIFF_RANGE="origin/main...HEAD"
+            DIFF_RANGE="HEAD~1"
           fi
           CHANGED_FILES=$(git diff --name-only $DIFF_RANGE 2>/dev/null || true)
 
@@ -131,8 +130,12 @@ jobs:
                 dir="${BASH_REMATCH[1]}"
                 func="${BASH_REMATCH[3]}"
                 
-                # Fuzzy match the target in the Ninja graph to handle 'smoke' or 'exhaustive' subdirectories
-                FOUND_TARGET=$(ninja -C ${{ env.BUILD_DIR }} -t targets | grep -oE "^${PROJECT}\.test\.src\.${dir}\.([a-zA-Z0-9_]+\.)?${func}_test\.__unit__" | head -n 1 | tr -d '\r\n ' || true)
+                # Extract all matches, prioritize smoke tests to avoid exhaustive tests, fallback to first
+                ALL_MATCHES=$(ninja -C ${{ env.BUILD_DIR }} -t targets | grep -oE "^${PROJECT}\.test\.src\.${dir}\.([a-zA-Z0-9_]+\.)?${func}_test\.__unit__" || true)
+                FOUND_TARGET=$(echo "$ALL_MATCHES" | grep "\.smoke\." | head -n 1 | tr -d '\r\n ' || true)
+                if [ -z "$FOUND_TARGET" ]; then
+                  FOUND_TARGET=$(echo "$ALL_MATCHES" | head -n 1 | tr -d '\r\n ' || true)
+                fi
                 
                 if [ -n "$FOUND_TARGET" ]; then
                   NINJA_TARGETS+=("$FOUND_TARGET")
@@ -239,8 +242,7 @@ jobs:
             git fetch origin ${{ github.event.pull_request.base.ref }} --depth=1 || true
             DIFF_RANGE="origin/${{ github.event.pull_request.base.ref }}...HEAD"
           else
-            git fetch origin main --depth=1 || true
-            DIFF_RANGE="origin/main...HEAD"
+            DIFF_RANGE="HEAD~1"
           fi
           CHANGED_FILES=$(git diff --name-only --diff-filter=AM $DIFF_RANGE | grep -E '^libc/.*\.(cpp|h)$' || true)
           if [ -z "$CHANGED_FILES" ]; then
@@ -280,6 +282,12 @@ jobs:
             # Execute the mathematical Python intersection algorithm
             python3 libc/utils/delta_coverage.py coverage_git_diff.tmp coverage.json $BASE_SHA $HEAD_SHA $BASE_BRANCH $HEAD_BRANCH | tee delta_report.tmp >> $GITHUB_STEP_SUMMARY || true
 
+            # Safety Net: Verify Python script generated output
+            if [ ! -s delta_report.tmp ]; then
+              echo "> [!WARNING]" >> $GITHUB_STEP_SUMMARY
+              echo "> **Delta Coverage Error:** The Python extraction script failed to generate a report. Check the action logs." >> $GITHUB_STEP_SUMMARY
+            fi
+
             # 2. Print Delta Coverage Source Map
             {
               echo "### Delta Coverage (Source Map)"
@@ -298,11 +306,28 @@ jobs:
           echo "=== FULL LIBC COVERAGE METRICS ==="
           {
             echo "### Full LLVM-libc Coverage Metrics"
-            echo '```text'
+            echo "<details><summary><b>Click to expand full project coverage</b></summary>"
+            echo ""
             llvm-cov-${{ env.LLVM_VERSION }} report "$FIRST_BIN" "${OBJECT_ARGS[@]}" \
               -instr-profile=merged.profdata \
-              -ignore-filename-regex=".*test.*"
-            echo '```'
+              -ignore-filename-regex=".*test.*" | python3 -c '
+import sys, re
+lines = [l.strip() for l in sys.stdin if l.strip() and not l.startswith("--")]
+if not lines: sys.exit(0)
+headers = re.split(r"\s{2,}", lines[0])
+print("| " + " | ".join(headers) + " |")
+print("|" + "|".join(["---"] * len(headers)) + "|")
+for line in lines[1:]:
+    cols = re.split(r"\s{2,}", line)
+    if not cols: continue
+    if cols[0] == "TOTAL":
+        cols = [f"**{c}**" for c in cols]
+    else:
+        cols[0] = f"`{cols[0]}`"
+    print("| " + " | ".join(cols) + " |")
+'
+            echo ""
+            echo "</details>"
           } | tee -a $GITHUB_STEP_SUMMARY
           echo "::endgroup::"
 
