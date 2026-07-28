@@ -1,4 +1,4 @@
-name: 'LLVM Libc Code Coverage Pipeline'
+name: libc-coverage
 
 on:
   workflow_call:
@@ -79,13 +79,13 @@ jobs:
         run: |
           cmake -S llvm -B ${{ env.BUILD_DIR }} -G Ninja \
             -DLLVM_ENABLE_PROJECTS="${{ inputs.project_name || 'libc' }}" \
-            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_C_COMPILER=clang-${{ env.LLVM_VERSION }} \
             -DCMAKE_CXX_COMPILER=clang++-${{ env.LLVM_VERSION }} \
             -DCMAKE_C_COMPILER_LAUNCHER=sccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=sccache \
-            -DCMAKE_C_FLAGS="-O0 -gline-tables-only -Wno-error" \
-            -DCMAKE_CXX_FLAGS="-O0 -gline-tables-only -Wno-error" \
+            -DCMAKE_C_FLAGS="-O1 -gline-tables-only -Wno-error" \
+            -DCMAKE_CXX_FLAGS="-O1 -gline-tables-only -Wno-error" \
             -DLLVM_USE_LINKER=lld \
             -DLLVM_LIBC_ENABLE_LINTING=OFF \
             -DLLVM_LIBC_ENABLE_COVERAGE=ON \
@@ -125,9 +125,9 @@ jobs:
             NINJA_TARGETS=("$FALLBACK")
           else
             for file in $CHANGED_FILES; do
-              if [[ "$file" =~ ^${SRCDIR}/([^/]+)/([^/]+)\.cpp$ ]]; then
+              if [[ "$file" =~ ^${SRCDIR}/([^/]+)/(.*/)?([^/]+)\.cpp$ ]]; then
                 dir="${BASH_REMATCH[1]}"
-                func="${BASH_REMATCH[2]}"
+                func="${BASH_REMATCH[3]}"
                 target="${PROJECT}.test.src.${dir}.${func}_test.__unit__"
                 NINJA_TARGETS+=("$target")
               fi
