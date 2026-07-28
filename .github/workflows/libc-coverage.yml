@@ -100,12 +100,47 @@ jobs:
           find ${{ env.BUILD_DIR }} -name "*.profraw" -delete || true
           echo "::endgroup::"
 
+          echo "::group::Resolving Ninja test targets"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            DIFF_RANGE="origin/${{ github.event.pull_request.base.ref }}...HEAD"
+          else
+            DIFF_RANGE="HEAD~1 HEAD"
+          fi
+          CHANGED_FILES=$(git diff --name-only $DIFF_RANGE 2>/dev/null || true)
+
+          PROJECT="${{ inputs.project_name || 'libc' }}"
           FALLBACK="${{ inputs.fallback_target || 'check-libc' }}"
-          echo "Selected Ninja target: $FALLBACK"
+          SRCDIR="${{ inputs.source_dir || 'libc/src' }}"
+
+          CORE_CHANGE=0
+          if echo "$CHANGED_FILES" | grep -qE "^(${PROJECT}/test/UnitTest/|${SRCDIR}/__support/|${PROJECT}/CMakeLists.txt)|\.h$"; then
+            CORE_CHANGE=1
+          fi
+
+          NINJA_TARGETS=()
+          if [ $CORE_CHANGE -eq 1 ] || [ -z "$CHANGED_FILES" ]; then
+            echo "Core framework or header modified. Executing fallback full suite."
+            NINJA_TARGETS=("$FALLBACK")
+          else
+            for file in $CHANGED_FILES; do
+              if [[ "$file" =~ ^${SRCDIR}/([^/]+)/([^/]+)\.cpp$ ]]; then
+                dir="${BASH_REMATCH[1]}"
+                func="${BASH_REMATCH[2]}"
+                target="${PROJECT}.test.src.${dir}.${func}_test"
+                NINJA_TARGETS+=("$target")
+              fi
+            done
+          fi
+
+          if [ ${#NINJA_TARGETS[@]} -eq 0 ]; then
+            NINJA_TARGETS=("$FALLBACK")
+          fi
+          echo "Selected Ninja targets: ${NINJA_TARGETS[*]}"
+          echo "::endgroup::"
 
           echo "::group::Running libc test suite"
           sccache --zero-stats
-          ninja -C ${{ env.BUILD_DIR }} "$FALLBACK" || echo "::warning::Some tests failed, proceeding to coverage extraction"
+          ninja -C ${{ env.BUILD_DIR }} "${NINJA_TARGETS[@]}" || echo "::warning::Some tests failed, proceeding to coverage extraction"
           sccache --show-stats
           echo "::endgroup::"
 

@@ -2,6 +2,7 @@
 import sys
 import json
 import re
+import linecache
 
 def main():
     if len(sys.argv) != 3:
@@ -14,26 +15,41 @@ def main():
     # 1. Parse unified diff to extract modified lines
     changed = {}
     current_file = None
-    with open(diff_file, 'r') as f:
-        for line in f:
-            if line.startswith('+++ b/'):
-                current_file = line[6:].strip()
-                changed[current_file] = set()
-            elif current_file and line.startswith('@@ '):
-                match = re.search(r'\+([0-9]+)(?:,([0-9]+))?', line)
-                if match:
-                    length_str = match.group(2)
-                    length = int(length_str) if length_str is not None else 1
-                    start = int(match.group(1))
-                    for i in range(length):
-                        changed[current_file].add(start + i)
+    try:
+        with open(diff_file, 'r') as f:
+            for line in f:
+                if line.startswith('+++ b/'):
+                    current_file = line[6:].strip()
+                    changed[current_file] = set()
+                elif current_file and line.startswith('@@ '):
+                    match = re.search(r'\+([0-9]+)(?:,([0-9]+))?', line)
+                    if match:
+                        length_str = match.group(2)
+                        length = int(length_str) if length_str is not None else 1
+                        start = int(match.group(1))
+                        for i in range(length):
+                            changed[current_file].add(start + i)
+    except FileNotFoundError:
+        print(f"::error::Diff file '{diff_file}' not found.", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"::error::Failed to parse git diff: {e}", file=sys.stderr)
+        sys.exit(1)
 
     # 2. Parse llvm-cov JSON export
-    with open(json_file, 'r') as f:
-        cov_data = json.load(f)
+    try:
+        with open(json_file, 'r') as f:
+            cov_data = json.load(f)
+    except FileNotFoundError:
+        print(f"::error::Coverage JSON file '{json_file}' not found. Did llvm-cov export fail?", file=sys.stderr)
+        sys.exit(1)
+    except json.JSONDecodeError as e:
+        print(f"::error::Failed to parse coverage JSON: {e}", file=sys.stderr)
+        sys.exit(1)
 
     if not cov_data.get('data') or not cov_data['data'][0].get('files'):
-        print("No C/C++ lines were modified or coverage data is missing.")
+        print("::warning::Coverage data payload is empty.", file=sys.stderr)
+        print("No executable C/C++ lines were modified in this PR.")
         sys.exit(0)
 
     covered_lines = 0
@@ -43,6 +59,7 @@ def main():
 
     missed_line_details = []
     mcdc_missed_details = []
+    file_diff_data = {}
 
     for file_obj in cov_data['data'][0]['files']:
         filename = file_obj.get('filename', '')
@@ -92,16 +109,18 @@ def main():
 
         # Evaluate Delta Line Coverage
         for l in modified_lines:
-            # If the line exists in the coverage matrix and has a count > 0
+            if rel_path not in file_diff_data:
+                file_diff_data[rel_path] = {'covered': [], 'missed': []}
+
             if l in line_counts:
                 if line_counts[l] > 0:
                     covered_lines += 1
+                    file_diff_data[rel_path]['covered'].append(l)
                 else:
                     missed_lines += 1
                     missed_line_details.append(f"- `{rel_path}` (Line {l})")
-            else:
-                # Line was not executable (e.g., blank line, comment)
-                pass
+                    file_diff_data[rel_path]['missed'].append(l)
+                    print(f"::error file={rel_path},line={l}::Coverage Missed: This delta line was not executed.", file=sys.stderr)
 
         # Extract MC/DC logic
         # mcdc_records schema: [LineStart, ColStart, LineEnd, ColEnd, ..., Conditions, TestVectors]
@@ -150,6 +169,22 @@ def main():
             print(ml)
         for ml in mcdc_missed_details:
             print(ml)
+
+    if file_diff_data:
+        print("\n#### Source Line Evaluation")
+        for fpath, data in file_diff_data.items():
+            if not data['covered'] and not data['missed']:
+                continue
+            
+            print(f"**`{fpath}`**\n```diff")
+            for l in sorted(data['covered'] + data['missed']):
+                text = linecache.getline(fpath, l).rstrip('\n')
+                if text:
+                    prefix = "+" if l in data['covered'] else "-"
+                    print(f"{prefix} {l:4d} | {text}")
+            print("```\n")
+
+    if missed_lines > 0 or mcdc_missed_count > 0:
         sys.exit(1)
 
 if __name__ == '__main__':
