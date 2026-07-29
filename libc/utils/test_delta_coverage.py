@@ -174,11 +174,13 @@ class TestDeltaCoverage(unittest.TestCase):
             sys.stdout = sys.__stdout__
             output = captured_output.getvalue()
             
-            # 5 covered, 3 missed, 2 non-executable. Total executable = 8.
-            # Coverage = 5 / 8 = 62.50%
-            self.assertIn("The code coverage on the recent commit `head` is 62.50%. The total number of lines is 8, with 3 unexecuted lines.", output)
-            self.assertIn("- **Base Branch:** `main` (base)", output)
-            self.assertIn("- **Head Commit:** `feature` (head)", output)
+            import os
+            repo = os.environ.get("GITHUB_REPOSITORY", "llvm/llvm-project")
+            
+            self.assertIn("**Patch Coverage Analysis**", output)
+            self.assertIn(f"The code coverage on the recent commit [`head`](https://github.com/{repo}/commit/head) is 62.50%. The total number of lines is 8, with 3 unexecuted lines.", output)
+            self.assertIn(f"- **Base Branch:** [`main` (base)](https://github.com/{repo}/commit/base)", output)
+            self.assertIn(f"- **Head Commit:** [`feature` (head)](https://github.com/{repo}/commit/head)", output)
             self.assertIn("test.cpp", output)
         finally:
             sys.stdout = sys.__stdout__

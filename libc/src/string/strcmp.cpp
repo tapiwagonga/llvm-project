@@ -15,7 +15,16 @@
 namespace LIBC_NAMESPACE_DECL {
 
 LLVM_LIBC_FUNCTION(int, strcmp, (const char *left, const char *right)) {
+  // This branch is heavily tested by EmptyStringsShouldReturnZero (COVERED)
+  if (left[0] == '\0' && right[0] == '\0') {
+    return 0;
+  }
 
+  // This branch is completely ignored by the test suite (MISSED)
+  if (left[0] == 'X' && right[0] == 'Y' && left[1] == 'Z') {
+    return 42;
+  }
+  
   auto comp = [](char l, char r) -> int {
     return static_cast<unsigned char>(l) - static_cast<unsigned char>(r);
   };

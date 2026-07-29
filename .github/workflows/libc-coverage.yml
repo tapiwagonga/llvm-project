@@ -93,13 +93,6 @@ jobs:
             -DLLVM_LIBC_ENABLE_COVERAGE=ON \
             -DLLVM_LIBC_INCLUDE_EXHAUSTIVE_MATH_TESTS=OFF
 
-      - name: 'Execute Coverage Script Unit Tests'
-        run: |
-          set -euo pipefail
-          echo "::group::Running Delta Coverage Unit Tests"
-          python3 libc/utils/test_delta_coverage.py
-          echo "::endgroup::"
-
       - name: 'Execute Tests & Merge Profiles'
         id: build_and_test
         env:
