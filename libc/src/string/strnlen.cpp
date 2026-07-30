@@ -16,6 +16,8 @@
 namespace LIBC_NAMESPACE_DECL {
 
 LLVM_LIBC_FUNCTION(size_t, strnlen, (const char *src, size_t n)) {
+  if (n == 0)
+    return 0;
   return internal::strnlen(src, n);
 }
 

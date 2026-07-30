@@ -18,7 +18,6 @@ on:
   push:
     branches:
       - main
-      - 'test-coverage/**'
     paths:
       - 'libc/**'
       - '.github/workflows/libc-coverage.yml'
@@ -99,20 +98,9 @@ jobs:
           SCCACHE_GHA_ENABLED: "true"
         run: |
           set -euo pipefail
-          echo "::group::Cleaning old profraw files"
-          find ${{ env.BUILD_DIR }} -name "*.profraw" -delete || true
-          echo "::endgroup::"
-
-          echo "::group::Resolving Ninja test targets"
-          # For PRs, GitHub checks out a merge commit where HEAD~1 is the base branch tip.
-          # For pushes, HEAD~1 is the parent commit. 
-          # In both cases, HEAD~1 perfectly isolates the changes without needing deep network fetches.
           CHANGED_FILES=$(git diff --name-only HEAD~1 2>/dev/null || true)
-          
           if [ -z "$CHANGED_FILES" ]; then
-            echo "::notice::No files modified or diff failed. Skipping coverage."
             echo "skip_coverage=true" >> $GITHUB_OUTPUT
-            
             REPORT_MSG="## LLVM-libc Coverage Report\n\n> [!NOTE]\n> **Coverage Validated:** No files modified in this commit."
             echo -e "$REPORT_MSG" >> $GITHUB_STEP_SUMMARY
             echo -e "$REPORT_MSG" > delta_report.tmp
@@ -124,29 +112,22 @@ jobs:
           SRCDIR="${{ inputs.source_dir || 'libc/src' }}"
 
           NINJA_TARGETS=()
-          
-          # Edge Case 3: Set IFS to newline to safely handle spaces in filenames
           OLD_IFS=$IFS
           IFS=$'\n'
           for file in $CHANGED_FILES; do
             if [[ "$file" =~ ^${SRCDIR}/([^/]+)/(.*/)?([^/]+)\.cpp$ ]]; then
               dir="${BASH_REMATCH[1]}"
               func="${BASH_REMATCH[3]}"
-              
-              # Edge Case 2: Use * instead of ? in the regex to support arbitrarily deep nested directories
               ALL_MATCHES=$(ninja -C ${{ env.BUILD_DIR }} -t targets | grep -oE "^${PROJECT}\.test\.src\.${dir}\.([a-zA-Z0-9_]+\.)*${func}_test\.__unit__" || true)
               FOUND_TARGET=$(echo "$ALL_MATCHES" | grep "\.smoke\." | head -n 1 | tr -d '\r\n ' || true)
               if [ -z "$FOUND_TARGET" ]; then
                 FOUND_TARGET=$(echo "$ALL_MATCHES" | head -n 1 | tr -d '\r\n ' || true)
               fi
-              
               if [ -n "$FOUND_TARGET" ]; then
-                # Prevent duplicate targets from being added (idempotency)
                 if [[ ! " ${NINJA_TARGETS[@]} " =~ " ${FOUND_TARGET} " ]]; then
                   NINJA_TARGETS+=("$FOUND_TARGET")
                 fi
               else
-                # Fallback to static guess if fuzzy match fails
                 GUESS="${PROJECT}.test.src.${dir}.${func}_test.__unit__"
                 if [[ ! " ${NINJA_TARGETS[@]} " =~ " ${GUESS} " ]]; then
                   NINJA_TARGETS+=("$GUESS")
@@ -157,87 +138,59 @@ jobs:
           IFS=$OLD_IFS
 
           if [ ${#NINJA_TARGETS[@]} -eq 0 ]; then
-            echo "::notice::No targeted .cpp files modified. Skipping coverage."
             echo "skip_coverage=true" >> $GITHUB_OUTPUT
-            
             REPORT_MSG="## LLVM-libc Delta Coverage Report\n\n> [!NOTE]\n> **Coverage Validated:** No targeted C++ test binaries were affected."
             echo -e "$REPORT_MSG" >> $GITHUB_STEP_SUMMARY
             echo -e "$REPORT_MSG" > delta_report.tmp
-            
             exit 0
           fi
+
           VALID_TARGETS=()
           for target in "${NINJA_TARGETS[@]}"; do
             if ninja -C ${{ env.BUILD_DIR }} -t targets | grep -F "${target}:" > /dev/null; then
               VALID_TARGETS+=("$target")
-            else
-              echo "::notice::Target $target does not exist. A unit test is either missing or not yet configured."
             fi
           done
 
           if [ ${#VALID_TARGETS[@]} -eq 0 ]; then
-            echo "No valid test targets found. Triggering graceful exit."
             echo "skip_coverage=true" >> $GITHUB_OUTPUT
-            
             REPORT_MSG="## LLVM-libc Delta Coverage Report\n\n> [!WARNING]\n> **Coverage Skipped:** Modified files lack corresponding unit tests in the CMake build system."
             echo -e "$REPORT_MSG" >> $GITHUB_STEP_SUMMARY
             echo -e "$REPORT_MSG" > delta_report.tmp
-            
             exit 0
           fi
 
-          echo "Selected Ninja targets: ${VALID_TARGETS[*]}"
-          echo "::endgroup::"
-
-          echo "::group::Running libc test suite"
-          ninja -C ${{ env.BUILD_DIR }} -j 2 "${VALID_TARGETS[@]}" 2>&1 | tee ninja_build.log || echo "::warning::Some tests failed, proceeding to coverage extraction"
-          echo "::endgroup::"
-          
-          echo "::group::Merging profile data"
+          ninja -C ${{ env.BUILD_DIR }} -j 2 "${VALID_TARGETS[@]}" 2>&1 | tee ninja_build.log || true
           find ${{ env.BUILD_DIR }} -name "*.profraw" > profraw.list
           if [ ! -s profraw.list ]; then
-            echo "::error::No profraw files generated! Compilation aborted or all tests crashed."
-            
             COMPILER_ERROR=$(grep -E -A 3 "error:|FAILED:" ninja_build.log | head -n 8 || true)
             if [ -z "$COMPILER_ERROR" ]; then
               COMPILER_ERROR="Unknown fatal error occurred before tests executed."
             fi
-            
-            REPORT_MSG="## LLVM-libc Delta Coverage Report\n\n> [!CAUTION]\n> **Coverage Aborted:** No profile data was generated. This usually means the C++ code failed to compile or the test binaries suffered fatal crashes before execution.\n\n### Compilation Context\n\`\`\`text\n${COMPILER_ERROR}\n\`\`\`"
+            REPORT_MSG="## LLVM-libc Delta Coverage Report\n\n> [!CAUTION]\n> **Coverage Aborted:** No profile data was generated.\n\n### Compilation Context\n\`\`\`text\n${COMPILER_ERROR}\n\`\`\`"
             echo -e "$REPORT_MSG" >> $GITHUB_STEP_SUMMARY
             echo -e "$REPORT_MSG" > delta_report.tmp
-            
             exit 1
           fi
 
-          PROFRAW_COUNT=$(wc -l < profraw.list)
-          echo "Found $PROFRAW_COUNT profile files. Merging..."
           if ! llvm-profdata-${{ env.LLVM_VERSION }} merge -sparse -input-files=profraw.list -o merged.profdata; then
-            echo "::warning::Fast bulk merge failed (likely due to a corrupted profile from a segfaulting test). Triggering robust sequential merge."
             touch merged.profdata
             for prof in $(cat profraw.list); do
-              llvm-profdata-${{ env.LLVM_VERSION }} merge -sparse "$prof" merged.profdata -o merged.profdata.tmp 2>/dev/null && mv merged.profdata.tmp merged.profdata || echo "::warning::Dropped corrupted profile: $prof"
+              llvm-profdata-${{ env.LLVM_VERSION }} merge -sparse "$prof" merged.profdata -o merged.profdata.tmp 2>/dev/null && mv merged.profdata.tmp merged.profdata || true
             done
           fi
-          
           if [ ! -s merged.profdata ]; then
-            echo "::error::Fatal: Failed to merge any valid profile data."
             exit 1
           fi
-          echo "::endgroup::"
 
       - name: 'Extract and Display Coverage'
         if: steps.build_and_test.outputs.skip_coverage != 'true'
         run: |
           set -euo pipefail
-          echo "::group::Locating Test Binaries"
           BINS=( $(find ${{ env.BUILD_DIR }}/projects/libc/test -name "*.__build__") )
           if [ ${#BINS[@]} -eq 0 ]; then
-            echo "::error::No test binaries found in build directory!"
             exit 1
           fi
-          echo "Located ${#BINS[@]} test binaries."
-
           FIRST_BIN="${BINS[0]}"
           OBJECT_ARGS=()
           for i in "${!BINS[@]}"; do
@@ -245,77 +198,40 @@ jobs:
               OBJECT_ARGS+=("-object=${BINS[$i]}")
             fi
           done
-          echo "::endgroup::"
 
-          echo "::group::Extracting Delta Patch Data"
-          # Critical Fix for Docker: Override Dubious Ownership
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
-
-          # For PRs, GitHub checks out a merge commit where HEAD~1 is the base branch tip.
-          # For pushes, HEAD~1 is the parent commit. 
-          # In both cases, HEAD~1 perfectly isolates the changes without needing deep network fetches.
           CHANGED_FILES=$(git diff --name-only --diff-filter=AM HEAD~1 | grep -E '^libc/.*\.(cpp|h)$' || true)
           if [ -z "$CHANGED_FILES" ]; then
-            echo "=== DELTA COVERAGE REPORT ===" | tee -a $GITHUB_STEP_SUMMARY
             echo "No C/C++ libc files changed against main branch. Skipping delta line coverage." | tee delta_report.tmp | tee -a $GITHUB_STEP_SUMMARY
-            echo "::endgroup::"
           else
-            echo "Found changed libc files:"
-            echo "$CHANGED_FILES"
-            echo "=== DELTA COVERAGE REPORT ==="
-
-            # Extract raw data to local temporary files
             git diff HEAD~1 --unified=0 $CHANGED_FILES > coverage_git_diff.tmp || true
-
-            # 1. Execute and Print Patch Coverage Metrics (Highest Priority)
-            # Export structured JSON AST from the compiler profiling data
             llvm-cov-${{ env.LLVM_VERSION }} export "$FIRST_BIN" "${OBJECT_ARGS[@]}" \
               -instr-profile=merged.profdata -format=text \
               $CHANGED_FILES > coverage.json
-            
-            # Extract Cryptographic Commit Hashes and Branch Names via GitHub Context
+
             if [ "${{ github.event_name }}" = "pull_request" ]; then
               BASE_SHA="${{ github.event.pull_request.base.sha }}"
               HEAD_SHA="${{ github.event.pull_request.head.sha }}"
               BASE_BRANCH="${{ github.event.pull_request.base.ref }}"
               HEAD_BRANCH="${{ github.event.pull_request.head.ref }}"
             else
-              # For direct pushes, the bash script diffs against HEAD~1. 
-              # We must use HEAD~1 for the SHA, not github.event.before (which breaks on force-pushes).
               BASE_SHA=$(git rev-parse HEAD~1 2>/dev/null || echo "unknown")
               HEAD_SHA="${{ github.sha }}"
               BASE_BRANCH="HEAD~1"
               HEAD_BRANCH="${{ github.ref_name }}"
             fi
 
-            # Execute the mathematical Python intersection algorithm
             SCRIPT_EXIT=0
             python3 libc/utils/delta_coverage.py coverage_git_diff.tmp coverage.json $BASE_SHA $HEAD_SHA $BASE_BRANCH $HEAD_BRANCH > delta_report.tmp || SCRIPT_EXIT=$?
-
-            # Safety Net: Verify Python script generated output or successful execution
             if [ $SCRIPT_EXIT -ne 0 ] || [ ! -s delta_report.tmp ]; then
-              REPORT_MSG="## LLVM-libc Delta Coverage Report\n\n> [!CAUTION]\n> **Coverage Pipeline Failed:** An internal error occurred while generating the report. The Python analysis script crashed silently or exited with an error."
+              REPORT_MSG="## LLVM-libc Delta Coverage Report\n\n> [!CAUTION]\n> **Coverage Pipeline Failed:** An internal error occurred while generating the report."
               echo -e "$REPORT_MSG" >> $GITHUB_STEP_SUMMARY
               echo -e "$REPORT_MSG" > delta_report.tmp
               exit 1
             fi
             cat delta_report.tmp >> $GITHUB_STEP_SUMMARY
-            
-            # Advisory Mode: Notify but do NOT fail the CI
-            if grep -q "Coverage Degradation" delta_report.tmp; then
-              echo "::warning::Coverage Degraded! See the step summary for details."
-            fi
-
-            # The Python script natively outputs the colored Markdown Source Map directly into the summary
-            # Cleanup temporary files
             rm -f coverage_git_diff.tmp coverage_source_map.tmp
-            echo "::endgroup::"
           fi
-
-          # Full project metrics table has been permanently removed by user request
-          echo "::group::Cleanup"
-          echo "Coverage extraction complete."
-          echo "::endgroup::"
 
       - name: 'Publish Sticky PR Comment'
         if: github.event_name == 'pull_request' && always()
