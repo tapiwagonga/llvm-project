@@ -18,6 +18,8 @@ namespace LIBC_NAMESPACE_DECL {
 
 // TODO: Look at performance benefits of comparing words.
 LLVM_LIBC_FUNCTION(void *, memchr, (const void *src, int c, size_t n)) {
+  if (n == 0)
+    return nullptr;
   if (n)
     LIBC_CRASH_ON_NULLPTR(src);
   return internal::find_first_character(
