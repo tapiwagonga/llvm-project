@@ -169,7 +169,7 @@ class ReportRenderer:
         import os
         repo = os.environ.get("GITHUB_REPOSITORY", "llvm/llvm-project")
         
-        commit_str = f"[`{head_sha}`](https://github.com/{repo}/commit/{head_sha}) " if head_sha else ""
+        commit_str = f"[`{head_sha[:7]}`](https://github.com/{repo}/commit/{head_sha}) " if head_sha else ""
         print(f"The code coverage on the recent commit {commit_str}is {coverage_percent:.2f}%. The total number of lines is {total_lines}, with {total_missed} unexecuted lines.")
             
         print("\n<details>")
@@ -177,8 +177,8 @@ class ReportRenderer:
         print("<br>\n")
         
         if base_sha and head_sha and base_branch and head_branch:
-            print(f"- **Base Branch:** [`{base_branch}` ({base_sha})](https://github.com/llvm/llvm-project/commit/{base_sha})")
-            print(f"- **Head Commit:** [`{head_branch}` ({head_sha})](https://github.com/{repo}/commit/{head_sha})\n")
+            print(f"- **Base Branch:** [`{base_branch}` ({base_sha[:7]})](https://github.com/llvm/llvm-project/commit/{base_sha})")
+            print(f"- **Head Commit:** [`{head_branch}` ({head_sha[:7]})](https://github.com/{repo}/commit/{head_sha})\n")
             print("---\n<br>\n")
             
         print("### Modified Files Summary")

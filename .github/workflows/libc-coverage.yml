@@ -275,15 +275,15 @@ jobs:
             
             # Extract Cryptographic Commit Hashes and Branch Names via GitHub Context
             if [ "${{ github.event_name }}" = "pull_request" ]; then
-              BASE_SHA=$(echo "${{ github.event.pull_request.base.sha }}" | cut -c1-7)
-              HEAD_SHA=$(echo "${{ github.event.pull_request.head.sha }}" | cut -c1-7)
+              BASE_SHA="${{ github.event.pull_request.base.sha }}"
+              HEAD_SHA="${{ github.event.pull_request.head.sha }}"
               BASE_BRANCH="${{ github.event.pull_request.base.ref }}"
               HEAD_BRANCH="${{ github.event.pull_request.head.ref }}"
             else
               # For direct pushes, the bash script diffs against HEAD~1. 
               # We must use HEAD~1 for the SHA, not github.event.before (which breaks on force-pushes).
-              BASE_SHA=$(git rev-parse --short HEAD~1 2>/dev/null || echo "unknown")
-              HEAD_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+              BASE_SHA=$(git rev-parse HEAD~1 2>/dev/null || echo "unknown")
+              HEAD_SHA="${{ github.sha }}"
               BASE_BRANCH="HEAD~1"
               HEAD_BRANCH="${{ github.ref_name }}"
             fi
