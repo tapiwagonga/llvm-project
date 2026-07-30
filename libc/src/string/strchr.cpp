@@ -16,6 +16,8 @@ namespace LIBC_NAMESPACE_DECL {
 
 // TODO: Look at performance benefits of comparing words.
 LLVM_LIBC_FUNCTION(char *, strchr, (const char *src, int c)) {
+  if (c == '\0')
+    return const_cast<char *>(src + internal::string_length(src));
   return internal::strchr_implementation(src, c);
 }
 

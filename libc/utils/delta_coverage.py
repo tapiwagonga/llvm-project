@@ -24,66 +24,72 @@ class DiffHunk:
         self.lines = [] # Tuples of (prefix_type, text, absolute_line_number)
 
 class DiffParser:
+    @classmethod
+    def parse_str(cls, diff_text: str):
+        return cls._parse_lines(diff_text.splitlines())
+
+    @classmethod
+    def parse(cls, diff_path: str):
+        with open(diff_path, 'r', encoding='utf-8') as f:
+            return cls._parse_lines(f)
+
     @staticmethod
-    def parse(diff_path):
+    def _parse_lines(lines):
         files = {}
         current_file = None
         current_hunk = None
         current_line_num = 0
 
-        with open(diff_path, 'r') as f:
-            for line in f:
-                line = line.rstrip('\n')
-                
-                if line.startswith("+++ b/"):
-                    current_file = line[6:]
-                    files[current_file] = []
-                    current_hunk = None
-                    continue
-                
-                if line.startswith("+++ /dev/null"):
-                    current_file = None
-                    current_hunk = None
-                    continue
-                
-                if current_file is None:
-                    continue
-
-                if line.startswith("@@"):
-                    match = re.search(r'\+([0-9]+)', line)
-                    if match:
-                        current_line_num = int(match.group(1))
-                        current_hunk = DiffHunk(line)
-                        files[current_file].append(current_hunk)
-                    continue
-
-                if current_hunk is None:
-                    continue
-
-                if line.startswith('-'):
-                    # Aggressively drop removed lines to prevent execution confusion
-                    continue
-                elif line.startswith('+'):
-                    current_hunk.lines.append(('+', line[1:], current_line_num))
-                    current_line_num += 1
-                elif line.startswith(' '):
-                    current_hunk.lines.append((' ', line[1:], current_line_num))
-                    current_line_num += 1
-                else:
-                    pass
-
+        for line in lines:
+            line = line.rstrip('\n')
+            if line.startswith("+++ b/"):
+                current_file = line[6:]
+                files[current_file] = []
+                current_hunk = None
+                continue
+            if line.startswith("+++ /dev/null"):
+                current_file = None
+                current_hunk = None
+                continue
+            if current_file is None:
+                continue
+            if line.startswith("@@"):
+                match = re.search(r'\+([0-9]+)', line)
+                if match:
+                    current_line_num = int(match.group(1))
+                    current_hunk = DiffHunk(line)
+                    files[current_file].append(current_hunk)
+                continue
+            if current_hunk is None:
+                continue
+            if line.startswith('-'):
+                continue
+            elif line.startswith('+'):
+                current_hunk.lines.append(('+', line[1:], current_line_num))
+                current_line_num += 1
+            elif line.startswith(' '):
+                current_hunk.lines.append((' ', line[1:], current_line_num))
+                current_line_num += 1
         return files
 
+
 class CoverageMapper:
-    @staticmethod
-    def parse(json_path, diff_files):
+    @classmethod
+    def parse_dict(cls, cov_data, diff_files):
+        return cls._map_data(cov_data, diff_files)
+
+    @classmethod
+    def parse(cls, json_path, diff_files):
         try:
-            with open(json_path, 'r') as f:
+            with open(json_path, 'r', encoding='utf-8') as f:
                 cov_data = json.load(f)
+            return cls._map_data(cov_data, diff_files)
         except Exception as e:
             sys.stderr.write(f"::error::Failed to parse coverage JSON: {e}\n")
             sys.exit(1)
 
+    @staticmethod
+    def _map_data(cov_data, diff_files):
         coverage_matrix = {}
         for fpath in diff_files.keys():
             coverage_matrix[fpath] = {'covered': set(), 'missed': set()}
@@ -359,7 +365,7 @@ class CoverageHistoryModel:
     ) -> List[CoverageHistoryEntry]:
         updated = [entry for entry in history if entry.sha != new_entry.sha]
         updated.append(new_entry)
-        return updated
+        return updated[-10:]
 
 
 class CommentRenderer:
