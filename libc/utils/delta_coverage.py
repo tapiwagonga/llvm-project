@@ -177,7 +177,7 @@ class ReportRenderer:
         print("<br>\n")
         
         if base_sha and head_sha and base_branch and head_branch:
-            print(f"- **Base Branch:** [`{base_branch}` ({base_sha})](https://github.com/{repo}/commit/{base_sha})")
+            print(f"- **Base Branch:** [`{base_branch}` ({base_sha})](https://github.com/llvm/llvm-project/commit/{base_sha})")
             print(f"- **Head Commit:** [`{head_branch}` ({head_sha})](https://github.com/{repo}/commit/{head_sha})\n")
             print("---\n<br>\n")
             

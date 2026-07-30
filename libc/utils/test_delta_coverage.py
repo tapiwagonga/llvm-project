@@ -186,7 +186,7 @@ class TestDeltaCoverage(unittest.TestCase):
             
             self.assertIn("**Patch Coverage Analysis**", output)
             self.assertIn(f"The code coverage on the recent commit [`head`](https://github.com/{repo}/commit/head) is 62.50%. The total number of lines is 8, with 3 unexecuted lines.", output)
-            self.assertIn(f"- **Base Branch:** [`main` (base)](https://github.com/{repo}/commit/base)", output)
+            self.assertIn("- **Base Branch:** [`main` (base)](https://github.com/llvm/llvm-project/commit/base)", output)
             self.assertIn(f"- **Head Commit:** [`feature` (head)](https://github.com/{repo}/commit/head)", output)
             self.assertIn("test.cpp", output)
         finally:
