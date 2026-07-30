@@ -319,41 +319,12 @@ jobs:
 
       - name: 'Publish Sticky PR Comment'
         if: github.event_name == 'pull_request' && always()
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
-        with:
-          script: |
-            const fs = require('fs');
-            if (!fs.existsSync('delta_report.tmp')) return;
-
-            const report = fs.readFileSync('delta_report.tmp', 'utf8');
-            if (!report.trim()) return;
-
-            const header = '### LLVM Libc Coverage Report (Delta)';
-            const body = `${header}\n\n${report}`;
-
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-            });
-
-            const botComment = comments.find(c => c.user.type === 'Bot' && c.body.includes(header));
-
-            if (botComment) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: botComment.id,
-                body: body
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                body: body
-              });
-            }
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -s delta_report.tmp ]; then
+            python3 libc/utils/delta_coverage.py --update-comment delta_report.tmp
+          fi
 
       - name: 'Workspace Teardown'
         if: always()

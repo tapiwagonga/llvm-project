@@ -7,9 +7,16 @@
 # SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 #
 # ==------------------------------------------------------------------------==#
-import sys
+import argparse
 import json
+import os
 import re
+import sys
+import urllib.error
+import urllib.request
+from dataclasses import asdict, dataclass
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 
 class DiffHunk:
     def __init__(self, header):
@@ -242,7 +249,212 @@ class ReportRenderer:
                         print(f"  {text}")
             print("```")
 
+@dataclass
+class CoverageHistoryEntry:
+    """Represents a single historical coverage iteration on a Pull Request."""
+    sha: str
+    line_pct: str
+    mcdc_pct: str
+    timestamp: str
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "CoverageHistoryEntry":
+        return cls(
+            sha=str(data.get("sha", "unknown"))[:7],
+            line_pct=str(data.get("line_pct", "N/A")),
+            mcdc_pct=str(data.get("mcdc_pct", "N/A")),
+            timestamp=str(data.get("timestamp", "")),
+        )
+
+
+class GitHubPRClient:
+    """Minimal, dependency-free REST client for GitHub Pull Request comments."""
+    def __init__(self, repo_full_name: str, pr_number: int, token: str):
+        self.repo_full_name = repo_full_name
+        self.pr_number = pr_number
+        self.token = token
+        self.base_url = f"https://api.github.com/repos/{repo_full_name}/issues/{pr_number}/comments"
+        self.headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "LLVM-libc-Coverage-Bot",
+        }
+
+    def _request(
+        self,
+        url: str,
+        method: str = "GET",
+        payload: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Any]:
+        data = json.dumps(payload).encode("utf-8") if payload else None
+        req = urllib.request.Request(
+            url, data=data, headers=self.headers, method=method
+        )
+        try:
+            with urllib.request.urlopen(req) as resp:
+                if resp.status == 204:
+                    return None
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as err:
+            print(
+                f"Notice: GitHub REST API {method} {url} failed with HTTP {err.code}. "
+                "Step Summary remains untouched.",
+                file=sys.stderr,
+            )
+            return None
+
+    def find_bot_comment(self, header_prefix: str) -> Optional[Dict[str, Any]]:
+        comments = self._request(self.base_url, method="GET")
+        if not isinstance(comments, list):
+            return None
+        for comment in comments:
+            is_bot = comment.get("user", {}).get("type") == "Bot"
+            body = comment.get("body", "")
+            if is_bot and header_prefix in body:
+                return comment
+        return None
+
+    def upsert_comment(
+        self, body: str, existing_comment_url: Optional[str] = None
+    ) -> bool:
+        payload = {"body": body}
+        if existing_comment_url:
+            return (
+                self._request(
+                    existing_comment_url, method="PATCH", payload=payload
+                )
+                is not None
+            )
+        return self._request(self.base_url, method="POST", payload=payload) is not None
+
+
+class CoverageHistoryModel:
+    """Manages serialization and idempotent updates of historical coverage state."""
+    STATE_REGEX = re.compile(r"<!--\s*cov_history:\s*(\[.*?\])\s*-->", re.DOTALL)
+
+    @classmethod
+    def extract(cls, comment_body: str) -> List[CoverageHistoryEntry]:
+        match = cls.STATE_REGEX.search(comment_body)
+        if not match:
+            return []
+        try:
+            raw_items = json.loads(match.group(1))
+            if isinstance(raw_items, list):
+                return [CoverageHistoryEntry.from_dict(item) for item in raw_items]
+        except (json.JSONDecodeError, TypeError, ValueError):
+            pass
+        return []
+
+    @classmethod
+    def serialize(cls, history: List[CoverageHistoryEntry]) -> str:
+        data = [asdict(entry) for entry in history]
+        return f"\n<!-- cov_history: {json.dumps(data, separators=(',', ':'))} -->"
+
+    @classmethod
+    def upsert_entry(
+        cls,
+        history: List[CoverageHistoryEntry],
+        new_entry: CoverageHistoryEntry,
+    ) -> List[CoverageHistoryEntry]:
+        updated = [entry for entry in history if entry.sha != new_entry.sha]
+        updated.append(new_entry)
+        return updated
+
+
+class CommentRenderer:
+    """Formats Markdown tables and sticky comment headers."""
+    HEADER = "### LLVM-libc Patch Coverage Report"
+
+    @staticmethod
+    def render_history_table(history: List[CoverageHistoryEntry]) -> str:
+        if not history:
+            return ""
+        count = len(history)
+        label = "Iteration" if count == 1 else "Iterations"
+        lines = [
+            "\n<details>",
+            f"<summary><b>View Coverage Evolution ({count} {label})</b></summary>",
+            "",
+            "| Commit | Patch Line Coverage | Patch MC/DC | Timestamp |",
+            "| :---: | :---: | :---: | :---: |",
+        ]
+        for entry in reversed(history):
+            lines.append(
+                f"| `{entry.sha}` | {entry.line_pct} | {entry.mcdc_pct} | {entry.timestamp} |"
+            )
+        lines.append("</details>")
+        return "\n".join(lines)
+
+    @classmethod
+    def assemble_body(
+        cls,
+        report_markdown: str,
+        history: List[CoverageHistoryEntry],
+    ) -> str:
+        history_table = cls.render_history_table(history)
+        state_comment = CoverageHistoryModel.serialize(history)
+        return f"{cls.HEADER}\n\n{report_markdown}\n{history_table}{state_comment}"
+
+
+class CommentManager:
+    """Orchestrates sticky PR comment updates with historical coverage logs."""
+    @staticmethod
+    def post_or_update_comment(report_path: str) -> None:
+        token = os.environ.get("GITHUB_TOKEN")
+        event_path = os.environ.get("GITHUB_EVENT_PATH")
+        if not token or not event_path or not os.path.exists(event_path):
+            print("Notice: Missing GITHUB_TOKEN or PR context. Skipping PR comment update.")
+            return
+
+        with open(event_path, "r", encoding="utf-8") as f:
+            event_data = json.load(f)
+
+        pr_number = event_data.get("pull_request", {}).get("number")
+        repo_name = event_data.get("repository", {}).get("full_name")
+        head_sha = event_data.get("pull_request", {}).get("head", {}).get("sha", "")[:7]
+
+        if not pr_number or not repo_name:
+            print("Notice: Workflow is not executing in a Pull Request context. Skipping comment update.")
+            return
+
+        with open(report_path, "r", encoding="utf-8") as f:
+            report_text = f.read().strip()
+        if not report_text:
+            return
+
+        cov_match = re.search(r"is (\d+(?:\.\d+)?)%", report_text)
+        cov_pct = f"{cov_match.group(1)}%" if cov_match else "N/A"
+        today = datetime.now().strftime("%Y-%m-%d")
+
+        client = GitHubPRClient(repo_name, int(pr_number), token)
+        existing_comment = client.find_bot_comment(CommentRenderer.HEADER)
+
+        history = []
+        existing_url = None
+        if existing_comment:
+            existing_url = existing_comment.get("url")
+            history = CoverageHistoryModel.extract(existing_comment.get("body", ""))
+
+        new_entry = CoverageHistoryEntry(
+            sha=head_sha or "unknown",
+            line_pct=cov_pct,
+            mcdc_pct="N/A",
+            timestamp=today,
+        )
+        history = CoverageHistoryModel.upsert_entry(history, new_entry)
+        final_body = CommentRenderer.assemble_body(report_text, history)
+
+        success = client.upsert_comment(final_body, existing_url)
+        if success:
+            print(f"Successfully {'updated' if existing_url else 'created'} sticky PR coverage comment.")
+
+
 def main() -> None:
+    if len(sys.argv) == 3 and sys.argv[1] == "--update-comment":
+        CommentManager.post_or_update_comment(sys.argv[2])
+        sys.exit(0)
+
     parser = argparse.ArgumentParser(description="LLVM-libc Delta Coverage Analyzer")
     parser.add_argument("diff_file")
     parser.add_argument("json_file")

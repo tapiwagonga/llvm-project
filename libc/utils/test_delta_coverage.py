@@ -12,7 +12,14 @@ import unittest
 import tempfile
 import os
 import json
-from delta_coverage import DiffParser, CoverageMapper, ReportRenderer
+from delta_coverage import (
+    CoverageHistoryEntry,
+    CoverageHistoryModel,
+    CommentRenderer,
+    CoverageMapper,
+    DiffParser,
+    ReportRenderer,
+)
 
 class TestDeltaCoverage(unittest.TestCase):
     def setUp(self):
@@ -184,6 +191,33 @@ class TestDeltaCoverage(unittest.TestCase):
             self.assertIn("test.cpp", output)
         finally:
             sys.stdout = sys.__stdout__
+
+    def test_comment_history_model_and_renderer(self):
+        body = "Some text\n<!-- cov_history: [{\"sha\":\"e062a29\",\"line_pct\":\"82.10%\",\"mcdc_pct\":\"75.00%\",\"timestamp\":\"2026-07-28\"}] -->"
+        history = CoverageHistoryModel.extract(body)
+        self.assertEqual(len(history), 1)
+        self.assertEqual(history[0].sha, "e062a29")
+        self.assertEqual(history[0].line_pct, "82.10%")
+
+        new_entry = CoverageHistoryEntry("a112d3e", "95.20%", "90.00%", "2026-07-30")
+        history = CoverageHistoryModel.upsert_entry(history, new_entry)
+        self.assertEqual(len(history), 2)
+
+        # Test idempotency: upserting a112d3e again should replace, not duplicate
+        updated_entry = CoverageHistoryEntry("a112d3e", "98.00%", "95.00%", "2026-07-30")
+        history = CoverageHistoryModel.upsert_entry(history, updated_entry)
+        self.assertEqual(len(history), 2)
+        self.assertEqual(history[1].line_pct, "98.00%")
+
+        table = CommentRenderer.render_history_table(history)
+        self.assertIn("View Coverage Evolution (2 Iterations)", table)
+        self.assertIn("a112d3e", table)
+        self.assertIn("e062a29", table)
+
+        assembled = CommentRenderer.assemble_body("Report Text", history)
+        self.assertIn("### LLVM-libc Patch Coverage Report", assembled)
+        self.assertIn("<!-- cov_history:", assembled)
+
 
 if __name__ == '__main__':
     unittest.main()
