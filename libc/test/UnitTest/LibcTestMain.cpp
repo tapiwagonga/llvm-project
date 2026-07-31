@@ -57,15 +57,24 @@ TestOptions parseOptions(int argc, char **argv) {
 #include "src/string/memory_utils/inline_memcpy.h"
 #include <sys/syscall.h>
 
+//===----------------------------------------------------------------------===//
+// Freestanding Linux Code Coverage Profile Writer
+//
+// Freestanding (-nostdlib) libc binaries cannot link standard compiler-rt
+// file I/O (fopen/fwrite). Here we override compiler-rt's default filename
+// to "/dev/null" and register write_raw_profile() via atexit() to dump
+// raw coverage counters (libc_cov_<pid>.profraw) using direct Linux
+// system calls (SYS_mmap, SYS_openat, SYS_write, SYS_close, SYS_munmap).
+//===----------------------------------------------------------------------===//
 extern "C" {
-__attribute__((weak)) uint64_t __llvm_profile_get_size_for_buffer(void);
+__attribute__((weak)) uint64_t __llvm_profile_get_size_for_buffer();
 __attribute__((weak)) int __llvm_profile_write_buffer(char *buffer);
 __attribute__((weak)) void
 __llvm_profile_set_filename(const char *filename_pat);
 
-  // Override compiler-rt's weak filename symbol. This redirects the default
-  // filename to /dev/null to silence the default dumper by default.
-  char __llvm_profile_filename[] = "/dev/null";
+// Override compiler-rt's weak filename symbol. This redirects the default
+// filename to /dev/null to silence the default dumper by default.
+char __llvm_profile_filename[] = "/dev/null";
 }
 
 namespace {
@@ -93,7 +102,8 @@ void write_raw_profile() {
   if (!__llvm_profile_get_size_for_buffer || !__llvm_profile_write_buffer)
     return;
 
-  uint64_t required_size = __llvm_profile_get_size_for_buffer();
+  size_t required_size =
+      static_cast<size_t>(__llvm_profile_get_size_for_buffer());
   if (required_size == 0)
     return;
 
@@ -131,7 +141,7 @@ void write_raw_profile() {
   }
   int fd = fd_or_error.value();
 
-  uint64_t bytes_written = 0;
+  size_t bytes_written = 0;
   bool write_error_occurred = false;
   while (bytes_written < required_size) {
     auto write_or_error = LIBC_NAMESPACE::linux_syscalls::write(
@@ -168,11 +178,11 @@ void write_raw_profile() {}
 } // anonymous namespace
 #endif
 
-extern "C" int atexit(void (*func)(void));
+extern "C" int atexit(void (*func)());
 
-// We must use a global constructor to register the atexit hook instead of 
-// calling write_raw_profile() at the end of TEST_MAIN. This is because the 
-// LLVM libc test framework spawns child processes for Death Tests which 
+// We must use a global constructor to register the atexit hook instead of
+// calling write_raw_profile() at the end of TEST_MAIN. This is because the
+// LLVM libc test framework spawns child processes for Death Tests which
 // terminate via exit(). If we don't intercept exit(), we lose their coverage.
 __attribute__((constructor)) void __register_libc_coverage() {
   atexit(write_raw_profile);
