@@ -1,4 +1,4 @@
-name: LLVM-libc Post-Commit Delta Coverage
+name: LLVM-libc Pre-Commit Delta Coverage
 
 permissions:
   contents: read
@@ -7,11 +7,11 @@ permissions:
 on:
   push:
     branches:
-      - main
-      - post-commit-bot
+      - pre-commit-bot
+  pull_request:
     paths:
       - 'libc/**'
-      - '.github/workflows/libc-post-commit-coverage.yml'
+      - '.github/workflows/libc-pre-commit-coverage.yml'
 
 jobs:
   delta-coverage:
