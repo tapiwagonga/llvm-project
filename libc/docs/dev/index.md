@@ -15,6 +15,7 @@ implementing_a_function
 config_options
 date_and_time
 fuzzing
+code_coverage
 header_generation
 implementation_standard
 undefined_behavior
