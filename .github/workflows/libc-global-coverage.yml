@@ -1,4 +1,4 @@
-name: LLVM-libc Nightly Global Coverage
+name: LLVM-libc Overall Coverage Standalone
 
 permissions:
   contents: write # Required to push HTML files to gh-pages branch
