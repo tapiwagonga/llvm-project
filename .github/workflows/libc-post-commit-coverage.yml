@@ -114,10 +114,8 @@ jobs:
           echo "No valid targets found to test. Skipping coverage."
           echo "TARGETS=" >> $GITHUB_ENV
           
-          echo "## LLVM-libc Delta Coverage Report" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "> [!WARNING]" >> $GITHUB_STEP_SUMMARY
-          echo "> **Coverage Skipped:** Modified files lack corresponding unit tests or are core utility files. Post-Commit global coverage will evaluate these." >> $GITHUB_STEP_SUMMARY
+          echo "### Delta Coverage Skipped" >> $GITHUB_STEP_SUMMARY
+          echo "No \`.cpp\` source files with corresponding unit tests were modified in this commit." >> $GITHUB_STEP_SUMMARY
           exit 0
         fi
 
