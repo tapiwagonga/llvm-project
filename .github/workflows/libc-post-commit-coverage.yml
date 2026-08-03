@@ -58,7 +58,7 @@ jobs:
     - name: Merge Profiles
       run: |
         find build-cov -name "libc_cov_*.profraw" > profraw_list.txt
-        llvm-profdata merge -sparse --input-files=profraw_list.txt -o libc_full.profdata
+        llvm-profdata-23 merge -sparse --input-files=profraw_list.txt -o libc_full.profdata
 
     - name: Generate Coverage Summary
       run: |
@@ -69,5 +69,5 @@ jobs:
         # Append natively to the GitHub Actions Step Summary UI
         echo "### Full Codebase Coverage Summary" >> $GITHUB_STEP_SUMMARY
         echo '```text' >> $GITHUB_STEP_SUMMARY
-        llvm-cov report -instr-profile=libc_full.profdata "${EXECUTABLES[0]}" "${OBJECTS[@]}" >> $GITHUB_STEP_SUMMARY
+        llvm-cov-23 report -instr-profile=libc_full.profdata "${EXECUTABLES[0]}" "${OBJECTS[@]}" >> $GITHUB_STEP_SUMMARY
         echo '```' >> $GITHUB_STEP_SUMMARY
