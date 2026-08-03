@@ -47,6 +47,7 @@ jobs:
           -DLLVM_ENABLE_RUNTIMES=libc
           -DLLVM_LIBC_FULL_BUILD=ON
           -DLLVM_LIBC_ENABLE_COVERAGE=ON
+          -DLIBC_TEST_UNIT_TEST_ONLY=ON
         "
         cmake $CMAKE_FLAGS
 
