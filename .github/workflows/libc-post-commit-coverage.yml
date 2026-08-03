@@ -53,7 +53,7 @@ jobs:
 
     - name: Build and Run Full Codebase Tests
       shell: bash
-      run: ninja -C build-cov check-libc
+      run: ninja -C build-cov libc-unit-tests
 
     - name: Merge Profiles
       run: |
