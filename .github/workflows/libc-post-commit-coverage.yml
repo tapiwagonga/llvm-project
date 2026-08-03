@@ -147,8 +147,11 @@ jobs:
         
         # Append natively to the GitHub Actions Step Summary UI
         echo "### Delta Coverage Summary" >> $GITHUB_STEP_SUMMARY
+        echo "<details><summary><strong>Click to view targeted coverage table</strong></summary>" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
         echo '```text' >> $GITHUB_STEP_SUMMARY
         cat coverage_summary.txt >> $GITHUB_STEP_SUMMARY
         echo '```' >> $GITHUB_STEP_SUMMARY
+        echo "</details>" >> $GITHUB_STEP_SUMMARY
 
 

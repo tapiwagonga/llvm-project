@@ -73,7 +73,10 @@ jobs:
         OBJECTS=("${OBJECTS[@]/#/-object=}")
         
         # Append natively to the GitHub Actions Step Summary UI
-        echo "### Full Codebase Coverage Summary" >> $GITHUB_STEP_SUMMARY
+        echo "### Overall Codebase Coverage Summary" >> $GITHUB_STEP_SUMMARY
+        echo "<details><summary><strong>Click to view full coverage table</strong></summary>" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
         echo '```text' >> $GITHUB_STEP_SUMMARY
         llvm-cov-23 report -instr-profile=libc_full.profdata "${EXECUTABLES[0]}" "${OBJECTS[@]}" >> $GITHUB_STEP_SUMMARY
         echo '```' >> $GITHUB_STEP_SUMMARY
+        echo "</details>" >> $GITHUB_STEP_SUMMARY
