@@ -5,9 +5,14 @@ permissions:
   pull-requests: write # Required to post/update pre-commit coverage comments
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - pre-commit-bot
+      - main
+    paths:
+      - 'libc/**'
+      - '.github/workflows/libc-pre-commit-coverage.yml'
   pull_request:
     paths:
       - 'libc/**'
