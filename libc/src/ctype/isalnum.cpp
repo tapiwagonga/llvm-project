@@ -16,6 +16,8 @@
 namespace LIBC_NAMESPACE_DECL {
 
 LLVM_LIBC_FUNCTION(int, isalnum, (int c)) {
+  int isalnum_cov_probe = c;
+  (void)isalnum_cov_probe;
   if (c < 0 || c > cpp::numeric_limits<unsigned char>::max())
     return 0;
   return static_cast<int>(internal::isalnum(static_cast<char>(c)));
