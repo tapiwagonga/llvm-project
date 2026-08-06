@@ -1,0 +1,247 @@
+name: libc-coverage
+
+on:
+  workflow_call:
+    inputs:
+      project_name:
+        required: false
+        type: string
+        default: 'libc'
+      fallback_target:
+        required: false
+        type: string
+        default: 'check-libc'
+      source_dir:
+        required: false
+        type: string
+        default: 'libc/src'
+  push:
+    branches:
+      - main
+    paths:
+      - 'libc/**'
+      - '.github/workflows/libc-coverage.yml'
+      - '.github/workflows/containers/libc/**'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'libc/**'
+      - '.github/workflows/libc-coverage.yml'
+      - '.github/workflows/containers/libc/**'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BUILD_DIR: 'build-cov'
+  LLVM_VERSION: '19'
+  CLANG_CC: 'clang-19'
+  CLANG_CXX: 'clang++-19'
+  CCACHE_DIR: '/home/gha/.cache/ccache'
+
+jobs:
+  run-coverage:
+    name: 'Generate Coverage'
+    runs-on: ubuntu-latest
+    container: 'ghcr.io/llvm/libc-ubuntu-24.04:latest'
+    permissions:
+      contents: read
+      pull-requests: write
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: 'Checkout Repository'
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 2
+          submodules: false
+
+      - name: 'Setup ccache'
+        uses: hendrikmuhs/ccache-action@d62db5f07c26379fc4b4e0916f098a92573c3b03 # v1.2.23
+        with:
+          key: ${{ runner.os }}-ccache-${{ github.sha }}
+          restore-keys: ${{ runner.os }}-ccache-
+
+      - name: 'Install System Dependencies'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang-${{ env.LLVM_VERSION }} \
+            llvm-${{ env.LLVM_VERSION }} \
+            lld-${{ env.LLVM_VERSION }} \
+            libclang-rt-${{ env.LLVM_VERSION }}-dev \
+            ninja-build
+
+      - name: 'Configure CMake Build System'
+        run: |
+          cmake -S llvm -B ${{ env.BUILD_DIR }} -G Ninja \
+            -DLLVM_ENABLE_PROJECTS="${{ inputs.project_name || 'libc' }}" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=clang-${{ env.LLVM_VERSION }} \
+            -DCMAKE_CXX_COMPILER=clang++-${{ env.LLVM_VERSION }} \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_C_FLAGS="-O1 -gline-tables-only -Wno-error" \
+            -DCMAKE_CXX_FLAGS="-O1 -gline-tables-only -Wno-error" \
+            -DLLVM_USE_LINKER=lld \
+            -DLLVM_LIBC_ENABLE_LINTING=OFF \
+            -DLLVM_LIBC_ENABLE_COVERAGE=ON \
+            -DLLVM_LIBC_INCLUDE_EXHAUSTIVE_MATH_TESTS=OFF
+
+      - name: 'Execute Tests & Merge Profiles'
+        id: build_and_test
+        env:
+          SCCACHE_GHA_ENABLED: "true"
+        run: |
+          set -euo pipefail
+          CHANGED_FILES=$(git diff --name-only HEAD~1 2>/dev/null || true)
+          if [ -z "$CHANGED_FILES" ]; then
+            echo "skip_coverage=true" >> $GITHUB_OUTPUT
+            REPORT_MSG="## LLVM-libc Coverage Report\n\n> [!NOTE]\n> **Coverage Validated:** No files modified in this commit."
+            echo -e "$REPORT_MSG" >> $GITHUB_STEP_SUMMARY
+            echo -e "$REPORT_MSG" > delta_report.tmp
+            exit 0
+          fi
+
+          PROJECT="${{ inputs.project_name || 'libc' }}"
+          FALLBACK="${{ inputs.fallback_target || 'check-libc' }}"
+          SRCDIR="${{ inputs.source_dir || 'libc/src' }}"
+
+          NINJA_TARGETS=()
+          OLD_IFS=$IFS
+          IFS=$'\n'
+          for file in $CHANGED_FILES; do
+            if [[ "$file" =~ ^${SRCDIR}/([^/]+)/(.*/)?([^/]+)\.cpp$ ]]; then
+              dir="${BASH_REMATCH[1]}"
+              func="${BASH_REMATCH[3]}"
+              ALL_MATCHES=$(ninja -C ${{ env.BUILD_DIR }} -t targets | grep -oE "^${PROJECT}\.test\.src\.${dir}\.([a-zA-Z0-9_]+\.)*${func}_test\.__unit__" || true)
+              FOUND_TARGET=$(echo "$ALL_MATCHES" | grep "\.smoke\." | head -n 1 | tr -d '\r\n ' || true)
+              if [ -z "$FOUND_TARGET" ]; then
+                FOUND_TARGET=$(echo "$ALL_MATCHES" | head -n 1 | tr -d '\r\n ' || true)
+              fi
+              if [ -n "$FOUND_TARGET" ]; then
+                if [[ ! " ${NINJA_TARGETS[@]} " =~ " ${FOUND_TARGET} " ]]; then
+                  NINJA_TARGETS+=("$FOUND_TARGET")
+                fi
+              else
+                GUESS="${PROJECT}.test.src.${dir}.${func}_test.__unit__"
+                if [[ ! " ${NINJA_TARGETS[@]} " =~ " ${GUESS} " ]]; then
+                  NINJA_TARGETS+=("$GUESS")
+                fi
+              fi
+            fi
+          done
+          IFS=$OLD_IFS
+
+          if [ ${#NINJA_TARGETS[@]} -eq 0 ]; then
+            echo "skip_coverage=true" >> $GITHUB_OUTPUT
+            REPORT_MSG="## LLVM-libc Delta Coverage Report\n\n> [!NOTE]\n> **Coverage Validated:** No targeted C++ test binaries were affected."
+            echo -e "$REPORT_MSG" >> $GITHUB_STEP_SUMMARY
+            echo -e "$REPORT_MSG" > delta_report.tmp
+            exit 0
+          fi
+
+          VALID_TARGETS=()
+          for target in "${NINJA_TARGETS[@]}"; do
+            if ninja -C ${{ env.BUILD_DIR }} -t targets | grep -F "${target}:" > /dev/null; then
+              VALID_TARGETS+=("$target")
+            fi
+          done
+
+          if [ ${#VALID_TARGETS[@]} -eq 0 ]; then
+            echo "skip_coverage=true" >> $GITHUB_OUTPUT
+            REPORT_MSG="## LLVM-libc Delta Coverage Report\n\n> [!WARNING]\n> **Coverage Skipped:** Modified files lack corresponding unit tests in the CMake build system."
+            echo -e "$REPORT_MSG" >> $GITHUB_STEP_SUMMARY
+            echo -e "$REPORT_MSG" > delta_report.tmp
+            exit 0
+          fi
+
+          ninja -C ${{ env.BUILD_DIR }} -j 2 "${VALID_TARGETS[@]}" 2>&1 | tee ninja_build.log || true
+          find ${{ env.BUILD_DIR }} -name "*.profraw" > profraw.list
+          if [ ! -s profraw.list ]; then
+            COMPILER_ERROR=$(grep -E -A 3 "error:|FAILED:" ninja_build.log | head -n 8 || true)
+            if [ -z "$COMPILER_ERROR" ]; then
+              COMPILER_ERROR="Unknown fatal error occurred before tests executed."
+            fi
+            REPORT_MSG="## LLVM-libc Delta Coverage Report\n\n> [!CAUTION]\n> **Coverage Aborted:** No profile data was generated.\n\n### Compilation Context\n\`\`\`text\n${COMPILER_ERROR}\n\`\`\`"
+            echo -e "$REPORT_MSG" >> $GITHUB_STEP_SUMMARY
+            echo -e "$REPORT_MSG" > delta_report.tmp
+            exit 1
+          fi
+
+          if ! llvm-profdata-${{ env.LLVM_VERSION }} merge -sparse -input-files=profraw.list -o merged.profdata; then
+            touch merged.profdata
+            for prof in $(cat profraw.list); do
+              llvm-profdata-${{ env.LLVM_VERSION }} merge -sparse "$prof" merged.profdata -o merged.profdata.tmp 2>/dev/null && mv merged.profdata.tmp merged.profdata || true
+            done
+          fi
+          if [ ! -s merged.profdata ]; then
+            exit 1
+          fi
+
+      - name: 'Extract and Display Coverage'
+        if: steps.build_and_test.outputs.skip_coverage != 'true'
+        run: |
+          set -euo pipefail
+          BINS=( $(find ${{ env.BUILD_DIR }}/projects/libc/test -name "*.__build__") )
+          if [ ${#BINS[@]} -eq 0 ]; then
+            exit 1
+          fi
+          FIRST_BIN="${BINS[0]}"
+          OBJECT_ARGS=()
+          for i in "${!BINS[@]}"; do
+            if [ $i -ne 0 ]; then
+              OBJECT_ARGS+=("-object=${BINS[$i]}")
+            fi
+          done
+
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          CHANGED_FILES=$(git diff --name-only --diff-filter=AM HEAD~1 | grep -E '^libc/.*\.(cpp|h)$' || true)
+          if [ -z "$CHANGED_FILES" ]; then
+            echo "No C/C++ libc files changed against main branch. Skipping delta line coverage." | tee delta_report.tmp | tee -a $GITHUB_STEP_SUMMARY
+          else
+            git diff HEAD~1 --unified=0 $CHANGED_FILES > coverage_git_diff.tmp || true
+            llvm-cov-${{ env.LLVM_VERSION }} export "$FIRST_BIN" "${OBJECT_ARGS[@]}" \
+              -instr-profile=merged.profdata -format=text \
+              $CHANGED_FILES > coverage.json
+
+            if [ "${{ github.event_name }}" = "pull_request" ]; then
+              BASE_SHA="${{ github.event.pull_request.base.sha }}"
+              HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+              BASE_BRANCH="${{ github.event.pull_request.base.ref }}"
+              HEAD_BRANCH="${{ github.event.pull_request.head.ref }}"
+            else
+              BASE_SHA=$(git rev-parse HEAD~1 2>/dev/null || echo "unknown")
+              HEAD_SHA="${{ github.sha }}"
+              BASE_BRANCH="HEAD~1"
+              HEAD_BRANCH="${{ github.ref_name }}"
+            fi
+
+            SCRIPT_EXIT=0
+            python3 libc/utils/delta_coverage.py coverage_git_diff.tmp coverage.json $BASE_SHA $HEAD_SHA $BASE_BRANCH $HEAD_BRANCH > delta_report.tmp || SCRIPT_EXIT=$?
+            if [ $SCRIPT_EXIT -ne 0 ] || [ ! -s delta_report.tmp ]; then
+              REPORT_MSG="## LLVM-libc Delta Coverage Report\n\n> [!CAUTION]\n> **Coverage Pipeline Failed:** An internal error occurred while generating the report."
+              echo -e "$REPORT_MSG" >> $GITHUB_STEP_SUMMARY
+              echo -e "$REPORT_MSG" > delta_report.tmp
+              exit 1
+            fi
+            cat delta_report.tmp >> $GITHUB_STEP_SUMMARY
+            rm -f coverage_git_diff.tmp coverage_source_map.tmp
+          fi
+
+      - name: 'Publish Sticky PR Comment'
+        if: github.event_name == 'pull_request' && always()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -s delta_report.tmp ]; then
+            python3 libc/utils/delta_coverage.py --update-comment delta_report.tmp
+          fi
+
+      - name: 'Workspace Teardown'
+        if: always()
+        run: rm -rf ${{ env.BUILD_DIR }} *.tmp
