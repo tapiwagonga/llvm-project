@@ -1,7 +1,7 @@
 name: libc post-commit code coverage
 
 permissions:
-  contents: read
+  contents: write # Required to publish live HTML dashboard to gh-pages branch
 
 on:
   # Daily overnight run at 02:00 UTC
@@ -118,9 +118,8 @@ jobs:
         python3 libc/utils/coverage/full_report.py coverage.json "$COMMIT_SHA" "$BRANCH_REF" >> $GITHUB_STEP_SUMMARY
         echo "[LOG] Post-commit summary report written to GITHUB_STEP_SUMMARY."
 
-    - name: Upload HTML Coverage Artifact
-      uses: actions/upload-artifact@v4
+    - name: Deploy Live HTML Dashboard to GitHub Pages
+      uses: peaceiris/actions-gh-pages@v4
       with:
-        name: libc-coverage-html-report
-        path: coverage_html/
-        retention-days: 14
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_dir: ./coverage_html
