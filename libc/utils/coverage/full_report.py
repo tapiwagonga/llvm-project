@@ -9,19 +9,16 @@
 # ==-------------------------------------------------------------------------==#
 
 import argparse
-import os
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 # Ensure local module import works regardless of CWD
 sys.path.insert(0, str(Path(__file__).parent.resolve()))
 from parser import CoverageJSONParser
 
 
-def render_full_report(
-    cov_data: dict, head_sha: Optional[str], head_branch: Optional[str]
-) -> None:
+def render_full_report(cov_data: dict) -> None:
     if "data" not in cov_data or not cov_data["data"]:
         print("## LLVM-libc Full Codebase Coverage Report\n")
         print("> [!WARNING]")
@@ -29,7 +26,6 @@ def render_full_report(
         print("> The test execution completed but no coverage profiles were exported.")
         return
 
-    repo = os.environ.get("GITHUB_REPOSITORY", "llvm/llvm-project")
     subsystems: Dict[str, Dict[str, int]] = {}
     file_stats: List[Tuple[str, int, int, int, int]] = []
 
@@ -91,26 +87,24 @@ def render_full_report(
     print("> [!TIP]")
     print(f"> ### Overall Codebase Coverage: **{line_pct:.2f}%**")
     print(
-        f"> Successfully tested **{total_lines_cov} / {total_lines_tot}** executable lines across all LLVM-libc subsystems."
+        f"> Successfully tested **{total_lines_cov:,} / {total_lines_tot:,}** executable lines across all LLVM-libc subsystems."
     )
     print("")
 
-    if head_sha:
-        branch_name = head_branch or "main"
-        print(
-            f"- **Target Commit:** [`{branch_name}` ({head_sha[:7]})](https://github.com/{repo}/commit/{head_sha})"
-        )
-        print(f"- **Coverage Artifact:** [Download Interactive HTML Coverage Report](https://github.com/{repo}/actions)")
-        print("\n---\n")
+    print("> [!NOTE]")
+    print(
+        "> An interactive line-by-line HTML report is generated and available for download under the **Artifacts** section of this workflow run (`libc-coverage-html-report`)."
+    )
+    print("\n---\n")
 
     print("### Codebase Health Metrics")
-    print("| Metric | Covered | Total | Coverage % | Status |")
-    print("| :--- | :---: | :---: | :---: | :---: |")
+    print("| Metric | Covered | Total | Coverage % |")
+    print("| :--- | :---: | :---: | :---: |")
     print(
-        f"| **Executable Line Coverage** | {total_lines_cov:,} | {total_lines_tot:,} | **{line_pct:.2f}%** | {'HEALTHY' if line_pct >= 90 else 'ACTION NEEDED'} |"
+        f"| **Executable Line Coverage** | {total_lines_cov:,} | {total_lines_tot:,} | **{line_pct:.2f}%** |"
     )
     print(
-        f"| **Function Coverage** | {total_func_cov:,} | {total_func_tot:,} | **{func_pct:.2f}%** | {'HEALTHY' if func_pct >= 90 else 'ACTION NEEDED'} |\n"
+        f"| **Function Coverage** | {total_func_cov:,} | {total_func_tot:,} | **{func_pct:.2f}%** |\n"
     )
 
     print("### Subsystem Coverage Breakdown")
@@ -121,33 +115,18 @@ def render_full_report(
         s_func_pct = (data["func_cov"] / data["func_tot"] * 100) if data["func_tot"] > 0 else 0
         missed = data["lines_tot"] - data["lines_cov"]
         print(
-            f"| `libc/{sub}` | **{s_line_pct:.2f}%** | {s_func_pct:.2f}% | {data['lines_tot']} | {missed} |"
+            f"| `libc/{sub}` | **{s_line_pct:.2f}%** | {s_func_pct:.2f}% | {data['lines_tot']:,} | {missed:,} |"
         )
-
-    cold_files = [f for f in file_stats if f[2] > 0 and f[1] < f[2]]
-    cold_files.sort(key=lambda x: (x[1] / x[2], x[2] - x[1]))
-
-    if cold_files:
-        print("\n### Priority Focus Areas (Lowest Coverage Files)")
-        print("| File Path | Line Coverage | Covered / Total | Missed Lines |")
-        print("| :--- | :---: | :---: | :---: |")
-        for fpath, l_cov, l_tot, _, _ in cold_files[:10]:
-            f_pct = (l_cov / l_tot * 100) if l_tot > 0 else 0
-            missed = l_tot - l_cov
-            file_link = f"[`libc/{fpath}`](https://github.com/{repo}/blob/{head_sha or 'main'}/libc/{fpath})"
-            print(f"| {file_link} | **{f_pct:.2f}%** | {l_cov} / {l_tot} | {missed} |")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="LLVM-libc Full Coverage Analyzer")
     parser.add_argument("json_file", help="Path to llvm-cov export JSON file")
-    parser.add_argument("head_sha", nargs="?", help="Head commit SHA")
-    parser.add_argument("head_branch", nargs="?", help="Head branch name")
 
-    args = parser.parse_args()
+    args, _ = parser.parse_known_args()
 
     cov_data = CoverageJSONParser.load(args.json_file)
-    render_full_report(cov_data, args.head_sha, args.head_branch)
+    render_full_report(cov_data)
 
 
 if __name__ == "__main__":
