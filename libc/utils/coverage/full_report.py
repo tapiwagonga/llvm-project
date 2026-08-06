@@ -84,7 +84,7 @@ def render_full_report(cov_data: dict) -> None:
 
     print("## LLVM-libc Full Codebase Coverage Report\n")
 
-    print("> [!TIP]")
+    print("> [!NOTE]")
     print(f"> ### Overall Codebase Coverage: **{line_pct:.2f}%**")
     print(
         f"> Successfully tested **{total_lines_cov:,} / {total_lines_tot:,}** executable lines across all LLVM-libc subsystems."
