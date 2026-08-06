@@ -9,6 +9,7 @@
 # ==-------------------------------------------------------------------------==#
 
 import argparse
+import os
 import sys
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -82,6 +83,13 @@ def render_full_report(cov_data: dict) -> None:
     line_pct = (total_lines_cov / total_lines_tot * 100) if total_lines_tot > 0 else 0
     func_pct = (total_func_cov / total_func_tot * 100) if total_func_tot > 0 else 0
 
+    repo = os.environ.get("GITHUB_REPOSITORY", "tapiwagonga/llvm-project")
+    if "/" in repo:
+        owner, repo_name = repo.split("/", 1)
+        pages_url = f"https://{owner}.github.io/{repo_name}/"
+    else:
+        pages_url = f"https://{repo}.github.io/"
+
     print("## LLVM-libc Full Codebase Coverage Report\n")
 
     print("> [!NOTE]")
@@ -91,10 +99,7 @@ def render_full_report(cov_data: dict) -> None:
     )
     print("")
 
-    print("> [!NOTE]")
-    print(
-        "> An interactive line-by-line HTML report is generated and available for download under the **Artifacts** section of this workflow run (`libc-coverage-html-report`)."
-    )
+    print(f"- **Interactive HTML Dashboard:** [View Live Coverage Report]({pages_url})")
     print("\n---\n")
 
     print("### Codebase Health Metrics")
