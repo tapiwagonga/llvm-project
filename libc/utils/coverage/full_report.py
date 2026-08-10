@@ -83,7 +83,8 @@ def render_full_report(cov_data: dict) -> None:
     line_pct = (total_lines_cov / total_lines_tot * 100) if total_lines_tot > 0 else 0
     func_pct = (total_func_cov / total_func_tot * 100) if total_func_tot > 0 else 0
 
-    repo = os.environ.get("GITHUB_REPOSITORY", "tapiwagonga/llvm-project")
+    html_ready = os.environ.get("HTML_REPORT_READY", "true").lower() == "true"
+    repo = os.environ.get("GITHUB_REPOSITORY", "llvm/llvm-project")
     if "/" in repo:
         owner, repo_name = repo.split("/", 1)
         pages_url = f"https://{owner}.github.io/{repo_name}/"
@@ -99,7 +100,10 @@ def render_full_report(cov_data: dict) -> None:
     )
     print("")
 
-    print(f"- **Interactive HTML Dashboard:** [View Live Coverage Report]({pages_url})")
+    if html_ready:
+        print(f"- **Coverage Dashboard:** [{pages_url}]({pages_url})")
+    else:
+        print("- **Coverage Dashboard:** *Dashboard generation pending*")
     print("\n---\n")
 
     print("### Codebase Health Metrics")

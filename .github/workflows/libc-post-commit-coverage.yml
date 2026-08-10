@@ -111,15 +111,37 @@ jobs:
         # 1. Generate JSON export for Full Coverage Analyzer
         llvm-cov-23 export -format=text -instr-profile=libc_full.profdata "${EXECUTABLES[0]}" "${OBJECTS[@]}" > coverage.json
 
-        # 2. Generate Interactive HTML Coverage Report
-        llvm-cov-23 show -format=html -output-dir=coverage_html -instr-profile=libc_full.profdata "${EXECUTABLES[0]}" "${OBJECTS[@]}" -ignore-filename-regex=".*(test|utils).*"
+        # 2. Generate HTML Coverage Report with directory hierarchy and branch tracking
+        llvm-cov-23 show -format=html \
+          -output-dir=coverage_html \
+          -instr-profile=libc_full.profdata \
+          "${EXECUTABLES[0]}" "${OBJECTS[@]}" \
+          --show-directory-coverage \
+          --show-branches=count \
+          -ignore-filename-regex=".*(test|utils).*"
+        
+        # Railguard: Ensure .nojekyll exists so Jekyll never filters underscore directories
+        touch coverage_html/.nojekyll
 
-        # 3. Run Full Coverage Analyzer
+        # Railguard: Ensure root index.html redirects smoothly if generated in a subfolder
+        if [ ! -f coverage_html/index.html ]; then
+          MAIN_INDEX=$(find coverage_html -name "index.html" | head -n 1)
+          if [ -n "$MAIN_INDEX" ]; then
+            REL_INDEX="${MAIN_INDEX#coverage_html/}"
+            echo "<!DOCTYPE html><html><head><meta http-equiv=\"Refresh\" content=\"0; url='$REL_INDEX'\" /></head><body></body></html>" > coverage_html/index.html
+          fi
+        fi
+
+        # 3. Run Full Coverage Analyzer with HTML availability railguard
+        export HTML_REPORT_READY=$([ -s coverage_html/index.html ] && echo "true" || echo "false")
         python3 libc/utils/coverage/full_report.py coverage.json "$COMMIT_SHA" "$BRANCH_REF" >> $GITHUB_STEP_SUMMARY
         echo "[LOG] Post-commit summary report written to GITHUB_STEP_SUMMARY."
 
-    - name: Deploy Live HTML Dashboard to GitHub Pages
+    - name: Deploy Coverage Dashboard to GitHub Pages
+      if: success() && hashFiles('coverage_html/index.html') != ''
       uses: peaceiris/actions-gh-pages@v4
       with:
         github_token: ${{ secrets.GITHUB_TOKEN }}
         publish_dir: ./coverage_html
+        enable_jekyll: false
+        force_orphan: true
