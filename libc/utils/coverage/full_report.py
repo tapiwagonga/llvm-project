@@ -99,7 +99,7 @@ def render_full_report(cov_data: dict) -> None:
     )
     print("")
 
-    print(f"- **Interactive HTML Dashboard:** [View Live Coverage Report]({pages_url})")
+    print(f"- **Coverage Dashboard:** [{pages_url}]({pages_url})")
     print("\n---\n")
 
     print("### Codebase Health Metrics")

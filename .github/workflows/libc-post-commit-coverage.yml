@@ -111,15 +111,24 @@ jobs:
         # 1. Generate JSON export for Full Coverage Analyzer
         llvm-cov-23 export -format=text -instr-profile=libc_full.profdata "${EXECUTABLES[0]}" "${OBJECTS[@]}" > coverage.json
 
-        # 2. Generate Interactive HTML Coverage Report
-        llvm-cov-23 show -format=html -output-dir=coverage_html -instr-profile=libc_full.profdata "${EXECUTABLES[0]}" "${OBJECTS[@]}" -ignore-filename-regex=".*(test|utils).*"
+        # 2. Generate HTML Coverage Report with directory hierarchy and branch tracking
+        llvm-cov-23 show -format=html \
+          -output-dir=coverage_html \
+          -instr-profile=libc_full.profdata \
+          "${EXECUTABLES[0]}" "${OBJECTS[@]}" \
+          --show-directory-coverage \
+          --show-branches=count \
+          -ignore-filename-regex=".*(test|utils).*"
+        touch coverage_html/.nojekyll
 
         # 3. Run Full Coverage Analyzer
         python3 libc/utils/coverage/full_report.py coverage.json "$COMMIT_SHA" "$BRANCH_REF" >> $GITHUB_STEP_SUMMARY
         echo "[LOG] Post-commit summary report written to GITHUB_STEP_SUMMARY."
 
-    - name: Deploy Live HTML Dashboard to GitHub Pages
+    - name: Deploy Coverage Dashboard to GitHub Pages
       uses: peaceiris/actions-gh-pages@v4
       with:
         github_token: ${{ secrets.GITHUB_TOKEN }}
         publish_dir: ./coverage_html
+        enable_jekyll: false
+        force_orphan: true
