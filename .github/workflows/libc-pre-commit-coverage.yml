@@ -11,17 +11,29 @@ on:
       - pre-commit-bot
       - main
     paths:
-      - 'libc/**'
+      - 'libc/src/**'
+      - 'libc/include/**'
+      - 'libc/test/**'
+      - 'libc/CMakeLists.txt'
       - '.github/workflows/libc-pre-commit-coverage.yml'
     paths-ignore:
       - 'libc/docs/**'
+      - 'libc/benchmarks/**'
+      - 'libc/fuzzing/**'
+      - 'libc/utils/**'
       - '**.md'
   pull_request:
     paths:
-      - 'libc/**'
+      - 'libc/src/**'
+      - 'libc/include/**'
+      - 'libc/test/**'
+      - 'libc/CMakeLists.txt'
       - '.github/workflows/libc-pre-commit-coverage.yml'
     paths-ignore:
       - 'libc/docs/**'
+      - 'libc/benchmarks/**'
+      - 'libc/fuzzing/**'
+      - 'libc/utils/**'
       - '**.md'
 
 concurrency:
