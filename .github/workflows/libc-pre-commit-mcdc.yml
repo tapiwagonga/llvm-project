@@ -293,7 +293,7 @@ jobs:
           if (!fs.existsSync('coverage_report.md')) return;
 
           const reportContent = fs.readFileSync('coverage_report.md', 'utf8');
-          const identifier = '<!-- LLVM-LIBC-PRE-COMMIT-COVERAGE-COMMENT -->';
+          const identifier = '<!-- LLVM-LIBC-PRE-COMMIT-MCDC-COMMENT -->';
           const issue_number = context.payload.pull_request.number;
           const owner = context.repo.owner;
           const repo = context.repo.repo;
@@ -311,16 +311,16 @@ jobs:
             const headSha = context.payload.pull_request.head.sha.substring(0, 7);
             const dateStr = new Date().toISOString().replace('T', ' ').substring(0, 16);
             
-            const pctMatch = reportContent.match(/\|\s*\*\*Patch Line Coverage\*\*\s*\|\s*\*\*([0-9.]+)%\*\*\s*\|/);
-            const pct = pctMatch ? pctMatch[1] + '%' : '100.00%';
+            const lineMatch = reportContent.match(/\|\s*\*\*Patch Line Coverage\*\*\s*\|\s*\*\*([0-9.]+)%\*\*\s*\|/);
+            const linePct = lineMatch ? lineMatch[1] + '%' : '100.00%';
             
-            const lineMatch = reportContent.match(/\|\s*\*\*Executable Lines Evaluated\*\*\s*\|\s*\*\*([0-9]+)\*\*\s*\|/);
-            const totalLines = lineMatch ? lineMatch[1] : 'N/A';
+            const mcdcMatch = reportContent.match(/\|\s*\*\*MC\/DC Condition Independence\*\*\s*\|\s*\*\*([0-9.]+)%\*\*\s*\|/);
+            const mcdcPct = mcdcMatch ? mcdcMatch[1] + '%' : '100.00%';
 
             const missMatch = reportContent.match(/\|\s*\*\*Unexecuted Lines\*\*\s*\|\s*\*\*([0-9]+)\*\*\s*\|/);
             const missedLines = missMatch ? missMatch[1] : '0';
 
-            const newHistoryRow = `| [\`${headSha}\`](https://github.com/${owner}/${repo}/commit/${context.payload.pull_request.head.sha}) | ${dateStr} | ${totalLines} | **${pct}** | ${missedLines} |`;
+            const newHistoryRow = `| [\`${headSha}\`](https://github.com/${owner}/${repo}/commit/${context.payload.pull_request.head.sha}) | ${dateStr} | **${mcdcPct}** | **${linePct}** | ${missedLines} |`;
 
             let existingHistory = '';
             if (botComment && botComment.body.includes('<!-- HISTORY_START -->')) {
@@ -333,7 +333,7 @@ jobs:
 
             let historyTable = existingHistory;
             if (!historyTable) {
-              historyTable = `| Commit | Date (UTC) | Executable Lines | Patch Coverage | Missed Lines |\n| :---: | :---: | :---: | :---: | :---: |\n${newHistoryRow}`;
+              historyTable = `| Commit | Date (UTC) | MC/DC Coverage | Line Coverage | Missed Lines |\n| :---: | :---: | :---: | :---: | :---: |\n${newHistoryRow}`;
             } else {
               if (!historyTable.includes(headSha)) {
                 historyTable += `\n${newHistoryRow}`;

@@ -101,7 +101,7 @@ class CoverageJSONParser:
             return coverage_matrix
 
         for item in cov_data["data"][0].get("files", []):
-            fpath = item["filename"]
+            fpath = item.get("filename", "")
             rel_path = next(
                 (rp for rp in diff_files.keys() if fpath.endswith(rp)), None
             )
@@ -215,6 +215,8 @@ def render_patch_report(
 
     total_mcdc_cov = 0
     total_mcdc_tot = 0
+    total_decisions_count = 0
+    fully_verified_decisions = 0
     file_mcdc_data: Dict[str, Tuple[int, int, List[str]]] = {}
 
     for fpath, data in coverage_matrix.items():
@@ -243,34 +245,47 @@ def render_patch_report(
         # Evaluate MC/DC decisions on modified lines
         f_mcdc_cov = 0
         f_mcdc_tot = 0
-        missed_cond_details = []
+        condition_diagnostics = []
 
         for decision in data.get("mcdc_decisions", []):
             d_start = decision["line_start"]
             d_end = decision["line_end"]
             # Check if any modified line overlaps this decision range
             if any(d_start <= l <= d_end for l in added_lines):
+                total_decisions_count += 1
                 f_mcdc_cov += decision["covered"]
                 f_mcdc_tot += decision["total"]
-                if decision["covered"] < decision["total"]:
+                if decision["covered"] == decision["total"]:
+                    fully_verified_decisions += 1
+                    condition_diagnostics.append(
+                        f"`L{d_start}`: **{decision['covered']}/{decision['total']} conditions verified** (Complete)"
+                    )
+                else:
                     uncovered_idx = [
                         f"C{i+1}"
                         for i, is_cov in enumerate(decision["conditions"])
                         if not is_cov
                     ]
-                    missed_cond_details.append(
-                        f"`L{d_start}` ({decision['covered']}/{decision['total']} conds: {', '.join(uncovered_idx)} unverified)"
+                    condition_diagnostics.append(
+                        f"`L{d_start}`: **{decision['covered']}/{decision['total']} verified** ({', '.join(uncovered_idx)} unverified)"
                     )
 
         if f_mcdc_tot > 0:
             total_mcdc_cov += f_mcdc_cov
             total_mcdc_tot += f_mcdc_tot
-            file_mcdc_data[fpath] = (f_mcdc_cov, f_mcdc_tot, missed_cond_details)
+            file_mcdc_data[fpath] = (f_mcdc_cov, f_mcdc_tot, condition_diagnostics)
 
     total_lines = total_covered + total_missed
+    has_mcdc = total_mcdc_tot > 0
+
+    header_title = (
+        "## LLVM-libc Patch MC/DC & Logic Assurance Report"
+        if has_mcdc
+        else "## LLVM-libc Patch Coverage Report"
+    )
 
     if total_lines == 0 or not active_files:
-        print("## LLVM-libc Patch Coverage Report\n")
+        print(f"{header_title}\n")
         if base_sha and head_sha and base_branch and head_branch:
             print(
                 f"- **Base Branch:** [`{base_branch}` ({base_sha[:7]})](https://github.com/{base_repo}/commit/{base_sha})"
@@ -284,35 +299,46 @@ def render_patch_report(
         print("> No `.cpp` source files in `libc/src/` were modified in this patch.")
         return
 
-    print("## LLVM-libc Patch Coverage Report\n")
+    print(f"{header_title}\n")
 
     coverage_percent = (total_covered / total_lines) * 100
-    has_mcdc = total_mcdc_tot > 0
     mcdc_percent = (total_mcdc_cov / total_mcdc_tot * 100) if has_mcdc else 0.0
 
-    # Modern GitHub UI Alert Card
-    if total_missed == 0 and (not has_mcdc or total_mcdc_cov == total_mcdc_tot):
-        print("> [!TIP]")
-        print(f"> ### Patch Coverage: **{coverage_percent:.2f}%** (PASSED)")
-        if has_mcdc:
+    # 4-State UI Alert Card Hierarchy
+    if total_missed == 0:
+        if not has_mcdc:
+            # State A: Simple linear code, 100% line coverage
+            print("> [!TIP]")
+            print(f"> ### Patch Coverage: **{coverage_percent:.2f}%** (PASSED)")
             print(
-                f"> All **{total_lines}** executable lines and **{total_mcdc_tot}** MC/DC boolean condition(s) are fully verified by targeted tests."
+                f"> All **{total_lines}** newly added or modified executable lines are covered by targeted unit tests. *(No compound boolean decisions in patch)*"
+            )
+        elif total_mcdc_cov == total_mcdc_tot:
+            # State B: Gold standard (100% line + 100% MC/DC)
+            print("> [!TIP]")
+            print(
+                f"> ### Full Safety Assurance: **{coverage_percent:.2f}% Line** | **100.00% MC/DC** (PASSED)"
+            )
+            print(
+                f"> All **{total_lines}** executable lines and **{total_mcdc_tot}** boolean condition(s) across **{total_decisions_count}** decision(s) are fully verified with independent test vectors."
             )
         else:
+            # State C: 100% line coverage but partial MC/DC
+            print("> [!NOTE]")
             print(
-                f"> All **{total_lines}** newly added or modified executable lines are covered by targeted unit tests."
+                f"> ### Safety Assurance: **{mcdc_percent:.1f}% MC/DC Coverage** (PARTIAL)"
             )
-    elif total_missed == 0 and has_mcdc and total_mcdc_cov < total_mcdc_tot:
-        print("> [!NOTE]")
-        print(f"> ### Patch Line Coverage: **100.00%** (MC/DC: **{mcdc_percent:.1f}%**)")
-        print(
-            f"> All **{total_lines}** executable lines were executed, but **{total_mcdc_tot - total_mcdc_cov}** boolean condition(s) were not independently verified."
-        )
+            print(
+                f"> All **{total_lines}** executable lines were executed (100.00% Line Coverage), but **{total_mcdc_tot - total_mcdc_cov} of {total_mcdc_tot}** boolean sub-conditions were not independently verified."
+            )
     else:
+        # State D: Unexecuted lines (<100% line coverage)
         print("> [!WARNING]")
-        print(f"> ### Patch Coverage: **{coverage_percent:.2f}%** ({total_missed} Missed Lines)")
         print(
-            f"> **{total_missed}** unexecuted line(s) detected in your patch. Please review the missing lines below."
+            f"> ### Action Required: **{coverage_percent:.2f}% Patch Coverage** ({total_missed} Missed Lines)"
+        )
+        print(
+            f"> **{total_missed}** unexecuted line(s) detected in your patch. Please review the unexecuted line spans below."
         )
     print("")
 
@@ -332,30 +358,38 @@ def render_patch_report(
     print("\n---\n")
 
     # Executive Summary Table
-    status_label = "**PASSED**" if total_missed == 0 else "**ACTION REQUIRED**"
+    line_status = "**PASSED**" if total_missed == 0 else "**ACTION REQUIRED**"
     commit_link = (
         f"[`{head_sha[:7]}`](https://github.com/{head_repo}/commit/{head_sha})"
         if head_sha
         else "HEAD"
     )
 
-    print("### Executive Summary")
+    print("### Executive Safety Summary")
     print(
         f"The code coverage on the recent commit {commit_link} is **{coverage_percent:.2f}%**."
     )
     print("")
-    print("| Metric | Value | Status |")
+    print("| Metric | Measured Value | Target / Status |")
     print("| :--- | :---: | :---: |")
-    print(f"| **Patch Line Coverage** | **{coverage_percent:.2f}%** | {status_label} |")
     if has_mcdc:
         mcdc_status = (
             "**PASSED**"
             if total_mcdc_cov == total_mcdc_tot
             else "**PARTIAL**"
         )
-        print(
-            f"| **MC/DC Decision Coverage** | **{mcdc_percent:.2f}%** ({total_mcdc_cov}/{total_mcdc_tot} conds) | {mcdc_status} |"
+        decisions_status = (
+            "**Complete**"
+            if fully_verified_decisions == total_decisions_count
+            else "Action Recommended"
         )
+        print(
+            f"| **MC/DC Condition Independence** | **{mcdc_percent:.2f}%** ({total_mcdc_cov}/{total_mcdc_tot} conds) | {mcdc_status} |"
+        )
+        print(
+            f"| **Decisions Fully Verified** | **{fully_verified_decisions} / {total_decisions_count}** ({(fully_verified_decisions/total_decisions_count*100) if total_decisions_count > 0 else 0:.1f}%) | {decisions_status} |"
+        )
+    print(f"| **Patch Line Coverage** | **{coverage_percent:.2f}%** | {line_status} |")
     print(f"| **Executable Lines Evaluated** | **{total_lines}** | — |")
     print(f"| **Covered Lines** | **{total_covered}** | {coverage_percent:.1f}% |")
     print(
@@ -363,13 +397,13 @@ def render_patch_report(
     )
     print("")
 
-    # Modified Files Impact Table
-    print("### Modified Files Impact")
+    # Modified Files & Decision Diagnostics Table
+    print("### Modified Files & Decision Diagnostics")
     if has_mcdc:
         print(
-            "| Modified Source File | Line Coverage | MC/DC Decision Coverage | Missed Lines | Unexecuted Spans & Logic |"
+            "| Modified Source File | Line Coverage | MC/DC Decision Coverage | Missed Lines | Condition Diagnostics & Spans |"
         )
-        print("| :--- | :---: | :---: | :---: | :---: |")
+        print("| :--- | :---: | :---: | :---: | :--- |")
     else:
         print(
             "| Modified Source File | Patch Coverage | Covered / Total | Missed Lines | Unexecuted Line Spans |"
@@ -383,7 +417,7 @@ def render_patch_report(
         file_link = f"[`{fpath}`](https://github.com/{head_repo}/blob/{head_sha or 'main'}/{fpath})"
 
         if has_mcdc:
-            f_mc_cov, f_mc_tot, missed_conds = file_mcdc_data.get(
+            f_mc_cov, f_mc_tot, diag_list = file_mcdc_data.get(
                 fpath, (0, 0, [])
             )
             if f_mc_tot > 0:
@@ -392,12 +426,16 @@ def render_patch_report(
             else:
                 mcdc_cell = "—"
 
-            span_cell = line_spans
-            if missed_conds:
-                span_cell += "<br>" + "<br>".join(missed_conds)
+            diag_parts = []
+            if line_spans != "None":
+                diag_parts.append(f"Missed lines: {line_spans}")
+            if diag_list:
+                diag_parts.extend(diag_list)
+
+            diag_cell = "<br>".join(diag_parts) if diag_parts else "None"
 
             print(
-                f"| {file_link} | **{f_pct:.2f}%** ({len(f_covered)}/{f_total}) | {mcdc_cell} | {len(f_missed)} | {span_cell} |"
+                f"| {file_link} | **{f_pct:.2f}%** ({len(f_covered)}/{f_total}) | {mcdc_cell} | {len(f_missed)} | {diag_cell} |"
             )
         else:
             print(
