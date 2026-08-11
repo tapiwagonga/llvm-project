@@ -4,9 +4,14 @@ permissions:
   contents: write
 
 on:
+  # Daily overnight run at 02:00 UTC
   schedule:
-    - cron: '0 3 * * *'
+    - cron: '0 2 * * *'
+
+  # Allow manual on-demand execution from GitHub Actions UI ("Run workflow" button)
   workflow_dispatch:
+
+  # Trigger on pushes to main / libc-mcdc-coverage
   push:
     branches:
       - main
