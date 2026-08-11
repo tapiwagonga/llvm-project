@@ -1,110 +1,184 @@
 (code_coverage)=
 
-# Source-Level Code Coverage
+# How to Run Code Coverage and MC/DC Locally
 
-LLVM-libc supports source-level code coverage for its unit tests.
+LLVM-libc provides native support for generating statement, branch, and Modified Condition / Decision Coverage (MC/DC) reports locally. Because LLVM-libc runs in a freestanding environment without linking against a host standard library, coverage profile counters and boolean bitmasks are captured directly through Linux kernel system calls.
 
-Because `llvm-libc` unit tests are built as freestanding binaries (`-nostdlib`), standard `compiler-rt` coverage workflows fail in this environment as they inherently rely on the host's standard C library (`fopen`, `fwrite`), which is intentionally omitted to prevent host contamination.
+---
 
-To bypass this constraint, the `LibcTestMain.cpp` test harness implements a custom profiling dumper:
+## Prerequisites
 
-1. It silences the default `compiler-rt` dumper by overriding the global symbol: `extern "C" char __llvm_profile_filename[] = "/dev/null";`.
-2. It hooks into `atexit()` to dump coverage before the process ends. *(Note: Death tests that terminate via `_exit()`, `abort()`, or unhandled signals inherently bypass this hook. The parent test runner still correctly dumps its overall profile).*
-3. It determines the required buffer size via `__llvm_profile_get_size_for_buffer()` and allocates memory using `LIBC_NAMESPACE::linux_syscalls::mmap`.
-4. It extracts the raw profiling data from the compiler into the memory segment using `__llvm_profile_write_buffer()`.
-5. It writes the segment to a `.profraw` file using internal Linux syscall wrappers (`open`, `write`, `close`, `munmap`).
+* **Compiler:** Clang 18 or newer (Clang 21+ recommended for MC/DC).
+* **LLVM Profiling Tools:** `llvm-profdata` and `llvm-cov` matching the Clang version.
+* **Build System:** CMake 3.28+ and Ninja.
 
-## Limitations
+---
 
-- **OS Support:** Because this relies on Linux system call wrappers, coverage extraction is strictly gated behind `#if defined(__linux__)`. On macOS or Windows builds, the coverage dumping step is gracefully bypassed, allowing the tests to compile normally.
+## CMake Configuration
 
-## 1. Setup and Configuration
-
-Before running any tests, you must clear old profile data and configure your CMake build directory to generate coverage instrumentation.
+Configure CMake with coverage instrumentation and MC/DC enabled:
 
 ```bash
-# 1. Clear previous profile artifacts
-find . -name "libc_cov_*.profraw" -delete
-rm -f libc_full.profdata profraw_list.txt
-
-# 2. Configure the build directory
 cmake -G Ninja -S runtimes -B build-cov \
-  -DLLVM_ENABLE_RUNTIMES="libc" \
+  -DCMAKE_C_COMPILER=clang \
+  -DCMAKE_CXX_COMPILER=clang++ \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DLLVM_ENABLE_RUNTIMES=libc \
   -DLLVM_LIBC_FULL_BUILD=ON \
   -DLLVM_LIBC_ENABLE_COVERAGE=ON \
-  -DCMAKE_CXX_COMPILER=clang++-19 \
-  -DCMAKE_C_COMPILER=clang-19
+  -DLIBC_ENABLE_MCDC=ON \
+  -DLIBC_TEST_UNIT_TEST_ONLY=ON \
+  -DLIBC_TEST_SKIP_DEATH_TESTS=ON \
+  -DLIBC_TEST_SKIP_SHARED_TESTS=ON
 ```
 
-## 2. Build and Run Tests
+---
 
-You have three options depending on how much of the library you want to test. (Targeted testing is significantly faster for local debugging).
+## Running MC/DC Coverage Locally on a Single Function / File
 
-Test targets in `llvm-libc` follow a strict naming convention based on their directory structure: `libc.test.<directory_path>.<test_name>.__unit__`.
+To measure coverage and inspect live boolean truth tables for a specific function (e.g., `isalnum` or `memchr`):
 
-### Option A: Whole Codebase
-To run the entire unit test suite (approx. 1,776 tests) and generate a massive, whole-codebase report:
+### 1. Build the Targeted Unit Test
 
 ```bash
-ninja -C build-cov check-libc
-
-# If using Option A, do not define FILES_TO_REPORT in Step 3.
+ninja -C build-cov libc.test.src.ctype.isalnum_test.__unit__
 ```
 
-### Option B: Single Target
-To instantly run coverage on a single test, specify its exact Ninja target. For example, to test `isalpha`:
+### 2. Execute the Test Binary with Profile Redirection
 
 ```bash
-# Run only the specific target
-ninja -C build-cov libc.test.src.ctype.isalpha_test.__unit__
-
-# Define the source file to filter the report in Step 3
-FILES_TO_REPORT="libc/src/ctype/isalpha.cpp"
+LLVM_PROFILE_FILE="build-cov/libc_%p.profraw" \
+  ./build-cov/libc/test/src/ctype/libc.test.src.ctype.isalnum_test.__unit__.__build__
 ```
 
-### Option C: Multiple Targets
-To run multiple isolated tests simultaneously, pass them as a space-separated list. For example, testing `isalpha` and `isdigit`:
+### 3. Merge the Raw Profile
 
 ```bash
-# Define your targets 
-TARGETS="libc.test.src.ctype.isalpha_test.__unit__ libc.test.src.ctype.isdigit_test.__unit__"
-
-# Run the targets
-ninja -C build-cov $TARGETS
-
-# Define the source files to filter the report in Step 3
-FILES_TO_REPORT="libc/src/ctype/isalpha.cpp libc/src/ctype/isdigit.cpp"
+llvm-profdata merge -sparse build-cov/libc_*.profraw -o build-cov/libc_test.profdata
 ```
 
-## 3. Generate the Report
-
-Once your tests have finished running, merge the raw profile data and extract the executables to map the coverage back to the source code.
+### 4. View MC/DC Truth Tables in the Terminal
 
 ```bash
-# 1. Merge raw profiles
-find . -name "libc_cov_*.profraw" > profraw_list.txt
-llvm-profdata-19 merge -sparse --input-files=profraw_list.txt -o libc_full.profdata
+llvm-cov show ./build-cov/libc/test/src/ctype/libc.test.src.ctype.isalnum_test.__unit__.__build__ \
+  -instr-profile=build-cov/libc_test.profdata \
+  --show-mcdc \
+  --show-branches=count \
+  libc/src/ctype/isalnum.cpp
+```
 
-# 2. Extract executables
+This prints the annotated source code and the boolean truth table:
+
+```
+   18|    517|LLVM_LIBC_FUNCTION(int, isalnum, (int c)) {
+   19|    517|  if (c < 0 || c > cpp::numeric_limits<unsigned char>::max())
+  ------------------
+  |  Branch (19:7):  [True: 256, False: 261]
+  |  Branch (19:16): [True: 0,   False: 261]
+  ------------------
+  |---> MC/DC Decision Region (19:7) to (19:61)
+  |
+  |  Number of Conditions: 2
+  |     Condition C1 --> (19:7)  [c < 0]
+  |     Condition C2 --> (19:16) [c > max]
+  |
+  |  Executed MC/DC Test Vectors:
+  |     C1, C2    Result
+  |  1 { F,  F  = F      }
+  |  2 { T,  -  = T      }
+  |
+  |  C1-Pair: covered: (1,2)
+  |  C2-Pair: not covered
+  |  MC/DC Coverage for Decision: 50.00%
+  ------------------
+   20|    256|    return 0;
+   21|    261|  return static_cast<int>(internal::isalnum(static_cast<char>(c)));
+   22|    517|}
+```
+
+### 5. Run the In-Tree Patch Coverage Analyzer
+
+To generate a Markdown patch coverage report against your current git diff:
+
+```bash
+# 1. Export coverage to JSON
+llvm-cov export ./build-cov/libc/test/src/ctype/libc.test.src.ctype.isalnum_test.__unit__.__build__ \
+  -instr-profile=build-cov/libc_test.profdata > build-cov/coverage.json
+
+# 2. Generate git diff against the base commit
+git diff HEAD~1 HEAD > build-cov/patch.diff
+
+# 3. Run the patch analyzer
+python3 libc/utils/coverage/patch_report.py build-cov/patch.diff build-cov/coverage.json
+```
+
+---
+
+## Running Full Codebase MC/DC Coverage Locally
+
+To build and measure coverage across all ~1,900 unit tests in the entire LLVM-libc codebase:
+
+### 1. Clean Previous Profile Counters
+
+```bash
+rm -f build-cov/libc_cov_*.profraw build-cov/libc_full.profdata
+```
+
+### 2. Execute All Unit Tests Across the Codebase
+
+The `-k 0` flag ensures Ninja executes all targets across all subsystems even if an isolated test fails:
+
+```bash
+export LLVM_PROFILE_FILE="build-cov/libc_cov_%p.profraw"
+ninja -k 0 -C build-cov libc-unit-tests || true
+```
+
+### 3. Merge All Collected Raw Profiles
+
+```bash
+find build-cov -name "libc_cov_*.profraw" > build-cov/profraw_list.txt
+llvm-profdata merge -sparse --input-files=build-cov/profraw_list.txt -o build-cov/libc_full.profdata
+```
+
+### 4. Collect Test Executables and Export Coverage JSON
+
+```bash
+# Gather all test binaries
 EXECUTABLES=($(find build-cov -type f -executable -name "*__build__"))
 OBJECTS=("${EXECUTABLES[@]:1}")
 OBJECTS=("${OBJECTS[@]/#/-object=}")
+
+# Export JSON data containing MC/DC records
+llvm-cov export \
+  -format=text \
+  -instr-profile=build-cov/libc_full.profdata \
+  "${EXECUTABLES[0]}" "${OBJECTS[@]}" \
+  -ignore-filename-regex=".*(test|utils).*" > build-cov/coverage.json
 ```
 
-### Choose Your Output Type
+### 5. Generate Interactive HTML Report with MC/DC Truth Tables
 
-You can specify the format of your final coverage report by changing the output command.
-
-**Option A: Terminal Summary Table (Text)**
-This provides a quick text-based summary of your coverage percentages directly in the terminal:
 ```bash
-llvm-cov-19 report -instr-profile=libc_full.profdata "${EXECUTABLES[0]}" "${OBJECTS[@]}" $FILES_TO_REPORT
+llvm-cov show \
+  -format=html \
+  -output-dir=coverage_mcdc_html \
+  -instr-profile=build-cov/libc_full.profdata \
+  "${EXECUTABLES[0]}" "${OBJECTS[@]}" \
+  --show-directory-coverage \
+  --show-branches=count \
+  --show-mcdc \
+  --show-mcdc-summary \
+  -ignore-filename-regex=".*(test|utils).*"
 ```
 
-**Option B: Line-by-Line Interactive Webpage (HTML)**
-This generates an interactive HTML website so you can visually inspect exactly which lines of code are missing coverage. You can change the `OUTPUT_DIR` variable to save it wherever you prefer:
+### 6. Print the Full Codebase Coverage Summary
+
 ```bash
-OUTPUT_DIR="coverage_html"
-llvm-cov-19 show -instr-profile=libc_full.profdata -format=html -output-dir=$OUTPUT_DIR "${EXECUTABLES[0]}" "${OBJECTS[@]}" $FILES_TO_REPORT
+python3 libc/utils/coverage/full_report.py build-cov/coverage.json
 ```
-*(After running this, open `coverage_html/index.html` in your web browser).*
+
+### 7. View the HTML Dashboard in Your Browser
+
+```bash
+xdg-open coverage_mcdc_html/index.html
+```
