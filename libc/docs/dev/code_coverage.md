@@ -16,7 +16,26 @@ LLVM-libc provides native support for generating statement, branch, and Modified
 
 ## CMake Configuration
 
-Configure CMake with coverage instrumentation and MC/DC enabled:
+Configure CMake as a standalone runtime build via `-S runtimes`.
+
+### 1. Standard Statement & Branch Coverage
+
+```bash
+cmake -G Ninja -S runtimes -B build-cov \
+  -DCMAKE_C_COMPILER=clang \
+  -DCMAKE_CXX_COMPILER=clang++ \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DLLVM_ENABLE_RUNTIMES=libc \
+  -DLLVM_LIBC_FULL_BUILD=ON \
+  -DLLVM_LIBC_ENABLE_COVERAGE=ON \
+  -DLIBC_TEST_UNIT_TEST_ONLY=ON \
+  -DLIBC_TEST_SKIP_DEATH_TESTS=ON \
+  -DLIBC_TEST_SKIP_SHARED_TESTS=ON
+```
+
+### 2. MC/DC Coverage (Modified Condition / Decision Coverage)
+
+To enable MC/DC tracking in addition to statement and branch coverage, add `-DLIBC_ENABLE_MCDC=ON`:
 
 ```bash
 cmake -G Ninja -S runtimes -B build-cov \
@@ -34,9 +53,9 @@ cmake -G Ninja -S runtimes -B build-cov \
 
 ---
 
-## Running MC/DC Coverage Locally on a Single Function / File
+## Running Coverage Locally on a Single Function / File
 
-To measure coverage and inspect live boolean truth tables for a specific function (e.g., `isalnum` or `memchr`):
+To measure coverage on a specific function (e.g., `isalnum` or `memchr`):
 
 ### 1. Build the Targeted Unit Test
 
@@ -57,8 +76,9 @@ LLVM_PROFILE_FILE="build-cov/libc_%p.profraw" \
 llvm-profdata merge -sparse build-cov/libc_*.profraw -o build-cov/libc_test.profdata
 ```
 
-### 4. View MC/DC Truth Tables in the Terminal
+### 4. View Coverage Reports in the Terminal
 
+**For MC/DC Truth Tables & Branch Counts:**
 ```bash
 llvm-cov show ./build-cov/libc/test/src/ctype/libc.test.src.ctype.isalnum_test.__unit__.__build__ \
   -instr-profile=build-cov/libc_test.profdata \
@@ -67,7 +87,15 @@ llvm-cov show ./build-cov/libc/test/src/ctype/libc.test.src.ctype.isalnum_test._
   libc/src/ctype/isalnum.cpp
 ```
 
-This prints the annotated source code and the boolean truth table:
+**For Standard Statement & Branch Coverage:**
+```bash
+llvm-cov show ./build-cov/libc/test/src/ctype/libc.test.src.ctype.isalnum_test.__unit__.__build__ \
+  -instr-profile=build-cov/libc_test.profdata \
+  --show-branches=count \
+  libc/src/ctype/isalnum.cpp
+```
+
+Example MC/DC output:
 
 ```
    18|    517|LLVM_LIBC_FUNCTION(int, isalnum, (int c)) {
@@ -98,14 +126,14 @@ This prints the annotated source code and the boolean truth table:
 
 ### 5. Run the In-Tree Patch Coverage Analyzer
 
-To generate a Markdown patch coverage report against your current git diff:
+To generate a Markdown patch coverage summary against your current git diff:
 
 ```bash
-# 1. Export coverage to JSON
+# 1. Export coverage data to JSON
 llvm-cov export ./build-cov/libc/test/src/ctype/libc.test.src.ctype.isalnum_test.__unit__.__build__ \
   -instr-profile=build-cov/libc_test.profdata > build-cov/coverage.json
 
-# 2. Generate git diff against the base commit
+# 2. Generate unified diff against base commit
 git diff HEAD~1 HEAD > build-cov/patch.diff
 
 # 3. Run the patch analyzer
@@ -114,7 +142,7 @@ python3 libc/utils/coverage/patch_report.py build-cov/patch.diff build-cov/cover
 
 ---
 
-## Running Full Codebase MC/DC Coverage Locally
+## Running Full Codebase Coverage Locally
 
 To build and measure coverage across all unit tests in the entire LLVM-libc codebase:
 
@@ -148,7 +176,7 @@ EXECUTABLES=($(find build-cov -type f -executable -name "*__build__"))
 OBJECTS=("${EXECUTABLES[@]:1}")
 OBJECTS=("${OBJECTS[@]/#/-object=}")
 
-# Export JSON data containing MC/DC records
+# Export JSON data
 llvm-cov export \
   -format=text \
   -instr-profile=build-cov/libc_full.profdata \
@@ -156,18 +184,31 @@ llvm-cov export \
   -ignore-filename-regex=".*(test|utils).*" > build-cov/coverage.json
 ```
 
-### 5. Generate Interactive HTML Report with MC/DC Truth Tables
+### 5. Generate Interactive HTML Report
 
+**With MC/DC Truth Tables:**
 ```bash
 llvm-cov show \
   -format=html \
-  -output-dir=coverage_mcdc_html \
+  -output-dir=coverage_html \
   -instr-profile=build-cov/libc_full.profdata \
   "${EXECUTABLES[0]}" "${OBJECTS[@]}" \
   --show-directory-coverage \
   --show-branches=count \
   --show-mcdc \
   --show-mcdc-summary \
+  -ignore-filename-regex=".*(test|utils).*"
+```
+
+**For Standard Statement Coverage (without MC/DC):**
+```bash
+llvm-cov show \
+  -format=html \
+  -output-dir=coverage_html \
+  -instr-profile=build-cov/libc_full.profdata \
+  "${EXECUTABLES[0]}" "${OBJECTS[@]}" \
+  --show-directory-coverage \
+  --show-branches=count \
   -ignore-filename-regex=".*(test|utils).*"
 ```
 
@@ -180,5 +221,5 @@ python3 libc/utils/coverage/full_report.py build-cov/coverage.json
 ### 7. View the HTML Dashboard in Your Browser
 
 ```bash
-xdg-open coverage_mcdc_html/index.html
+xdg-open coverage_html/index.html
 ```
