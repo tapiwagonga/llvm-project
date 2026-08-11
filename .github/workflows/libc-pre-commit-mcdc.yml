@@ -1,8 +1,8 @@
-name: "Libc Pre-Commit MC/DC Coverage Bot"
+name: libc pre-commit mcdc code coverage
 
 permissions:
   contents: read
-  pull-requests: write
+  pull-requests: write # Required to post/update pre-commit coverage comments
 
 on:
   workflow_dispatch:
@@ -36,255 +36,277 @@ on:
       - '!**.md'
 
 concurrency:
-  group: libc-pre-commit-mcdc-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  patch-mcdc-coverage:
+  pre-commit-mcdc-coverage:
+    timeout-minutes: 60
+    name: libc-pre-commit-mcdc-coverage
     runs-on: ubuntu-24.04
     container:
-      image: ghcr.io/llvm/libc-ubuntu-24.04:latest
+      image: ghcr.io/llvm/libc-ubuntu-24.04:latest@sha256:8fee4c9ce5a1fd095686593cd36e032c48a31b6ae575378c82accd1d86a08d59
+      options: >-
+        --privileged
+    defaults:
+      run:
+        shell: bash
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+    - name: Checkout Code
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ github.event.pull_request.head.sha || github.sha }}
+        fetch-depth: 2
+        persist-credentials: false
 
-      - name: Setup Compiler Cache (sccache)
-        uses: hendrikmuhs/ccache-action@v1.2.23
-        with:
-          max-size: 1G
-          key: libc_mcdc_coverage_unified_x86_64
-          variant: sccache
+    - name: Setup Compiler Cache (sccache)
+      uses: hendrikmuhs/ccache-action@v1.2.23
+      with:
+        max-size: 1G
+        key: libc_coverage_unified_v2_x86_64
+        variant: sccache
 
-      - name: Configure CMake with MC/DC
-        run: |
-          echo "=== [STAGE 1/4] Starting CMake Configuration (MC/DC) at $(date -u '+%Y-%m-%d %H:%M:%S UTC') ==="
-          START_TIME=$(date +%s)
+    - name: Configure CMake
+      run: |
+        echo "=== [STAGE 1/4] Starting CMake Configuration at $(date -u '+%Y-%m-%d %H:%M:%S UTC') ==="
+        START_TIME=$(date +%s)
 
-          export CMAKE_FLAGS="
-            -G Ninja
-            -S runtimes
-            -B build-cov
-            -DCMAKE_C_COMPILER=clang-23
-            -DCMAKE_CXX_COMPILER=clang++-23
-            -DCMAKE_BUILD_TYPE=Debug
-            -DCMAKE_C_COMPILER_LAUNCHER=sccache
-            -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
-            -DLLVM_USE_LINKER=lld-23
-            -DLLVM_ENABLE_RUNTIMES=libc
-            -DLLVM_LIBC_FULL_BUILD=ON
-            -DLLVM_LIBC_ENABLE_COVERAGE=ON
-            -DLIBC_ENABLE_MCDC=ON
-            -DLIBC_TEST_UNIT_TEST_ONLY=ON
-            -DLIBC_TEST_SKIP_DEATH_TESTS=ON
-            -DLIBC_TEST_SKIP_SHARED_TESTS=ON
-          "
-          cmake $CMAKE_FLAGS
+        export CMAKE_FLAGS="
+          -G Ninja
+          -S runtimes
+          -B build-cov
+          -DCMAKE_C_COMPILER=clang-23
+          -DCMAKE_CXX_COMPILER=clang++-23
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_C_COMPILER_LAUNCHER=sccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=sccache
+          -DLLVM_USE_LINKER=lld-23
+          -DLLVM_ENABLE_RUNTIMES=libc
+          -DLLVM_LIBC_FULL_BUILD=ON
+          -DLLVM_LIBC_ENABLE_COVERAGE=ON
+          -DLIBC_ENABLE_MCDC=ON
+          -DLIBC_TEST_UNIT_TEST_ONLY=ON
+          -DLIBC_TEST_SKIP_DEATH_TESTS=ON
+          -DLIBC_TEST_SKIP_SHARED_TESTS=ON
+        "
+        cmake $CMAKE_FLAGS
 
-          END_TIME=$(date +%s)
-          echo "=== [STAGE 1/4] CMake Configuration Completed in $((END_TIME - START_TIME))s ==="
+        END_TIME=$(date +%s)
+        echo "=== [STAGE 1/4] CMake Configuration Completed in $((END_TIME - START_TIME))s ==="
 
-      - name: Build and Run Targeted Tests
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
-          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
-          PR_BASE_REPO: ${{ github.event.pull_request.base.repo.full_name }}
-          PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
-          COMMIT_SHA: ${{ github.sha }}
-          BRANCH_REF: ${{ github.ref_name }}
-          REPO_NAME: ${{ github.repository }}
-        run: |
-          echo "=== [STAGE 2/4] Starting Targeted Test Discovery at $(date -u '+%Y-%m-%d %H:%M:%S UTC') ==="
-          START_TIME=$(date +%s)
+    - name: Build and Run Targeted Tests
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+        PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+        PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        PR_BASE_REPO: ${{ github.event.pull_request.base.repo.full_name }}
+        PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        COMMIT_SHA: ${{ github.sha }}
+        BRANCH_REF: ${{ github.ref_name }}
+        REPO_NAME: ${{ github.repository }}
+      run: |
+        echo "=== [STAGE 2/4] Starting Targeted Test Discovery at $(date -u '+%Y-%m-%d %H:%M:%S UTC') ==="
+        START_TIME=$(date +%s)
 
-          # Ensure upstream llvm-project remote is configured
-          git remote add upstream https://github.com/llvm/llvm-project.git 2>/dev/null || true
+        # Ensure upstream llvm-project remote is configured
+        git remote add upstream https://github.com/llvm/llvm-project.git 2>/dev/null || true
 
-          if [ "$EVENT_NAME" == "pull_request" ]; then
-            BASE_SHA="$PR_BASE_SHA"
-            HEAD_SHA="$PR_HEAD_SHA"
-            BASE_REF="$PR_BASE_REF"
-            HEAD_REF="$PR_HEAD_REF"
-            BASE_REPO="${PR_BASE_REPO:-llvm/llvm-project}"
-            HEAD_REPO="${PR_HEAD_REPO:-llvm/llvm-project}"
-            DIFF_BASE="$BASE_SHA"
-          else
-            DIFF_BASE=$(git merge-base HEAD origin/main 2>/dev/null || git rev-parse HEAD~1)
-            BASE_SHA="$DIFF_BASE"
-            HEAD_SHA="$COMMIT_SHA"
-            BASE_REF="main"
-            HEAD_REF="${BRANCH_REF:-main}"
-            BASE_REPO="llvm/llvm-project"
-            HEAD_REPO="${REPO_NAME:-llvm/llvm-project}"
+        # 1. Deterministically resolve Base and Head references against upstream llvm-project
+        if [ "$EVENT_NAME" == "pull_request" ]; then
+          BASE_SHA="$PR_BASE_SHA"
+          HEAD_SHA="$PR_HEAD_SHA"
+          BASE_REF="$PR_BASE_REF"
+          HEAD_REF="$PR_HEAD_REF"
+          BASE_REPO="${PR_BASE_REPO:-llvm/llvm-project}"
+          HEAD_REPO="${PR_HEAD_REPO:-$REPO_NAME}"
+          git fetch upstream "$BASE_SHA" --depth=1 2>/dev/null || git fetch origin "$BASE_SHA" --depth=1 2>/dev/null || git fetch origin "$BASE_REF" --depth=1 2>/dev/null || true
+          DIFF_BASE="$BASE_SHA"
+        else
+          # For direct pushes, compare the pushed commit against its parent (HEAD~1)
+          BASE_SHA=$(git rev-parse HEAD~1 2>/dev/null || echo "HEAD~1")
+          HEAD_SHA="$COMMIT_SHA"
+          BASE_REF="main"
+          HEAD_REF="$BRANCH_REF"
+          BASE_REPO="llvm/llvm-project"
+          HEAD_REPO="$REPO_NAME"
+          DIFF_BASE="HEAD~1"
+        fi
+
+        # Persist resolved commit references for all downstream steps
+        echo "DIFF_BASE=$DIFF_BASE" >> $GITHUB_ENV
+        echo "BASE_SHA=$BASE_SHA" >> $GITHUB_ENV
+        echo "HEAD_SHA=$HEAD_SHA" >> $GITHUB_ENV
+        echo "BASE_REF=$BASE_REF" >> $GITHUB_ENV
+        echo "HEAD_REF=$HEAD_REF" >> $GITHUB_ENV
+        echo "BASE_REPO=$BASE_REPO" >> $GITHUB_ENV
+        echo "HEAD_REPO=$HEAD_REPO" >> $GITHUB_ENV
+
+        echo "[LOG] Resolved Base: ${BASE_REF} (${BASE_SHA:0:7}) in ${BASE_REPO}"
+        echo "[LOG] Resolved Head: ${HEAD_REF} (${HEAD_SHA:0:7}) in ${HEAD_REPO}"
+
+        MODIFIED_FILES=$(git diff --name-only "$DIFF_BASE" HEAD -- libc/src/ || true)
+        echo "[LOG] Modified files in libc/src/:"
+        echo "$MODIFIED_FILES"
+
+        if [ -z "$MODIFIED_FILES" ]; then
+          echo "[LOG] No source files modified in libc/src/. Exiting successfully."
+          echo "TARGETS=" >> $GITHUB_ENV
+
+          echo "## LLVM-libc Patch Coverage Report" > coverage_report.md
+          echo "" >> coverage_report.md
+          echo "- **Base Branch:** [\`${BASE_REF}\` (${BASE_SHA:0:7})](https://github.com/${BASE_REPO}/commit/${BASE_SHA})" >> coverage_report.md
+          echo "- **Head Commit:** [\`${HEAD_REF}\` (${HEAD_SHA:0:7})](https://github.com/${HEAD_REPO}/commit/${HEAD_SHA})" >> coverage_report.md
+          echo "---" >> coverage_report.md
+          echo "" >> coverage_report.md
+          echo "**Coverage Validated**" >> coverage_report.md
+          echo "No \`.cpp\` source files in \`libc/src/\` were modified in this patch." >> coverage_report.md
+
+          cat coverage_report.md >> $GITHUB_STEP_SUMMARY
+          exit 0
+        fi
+
+        # Get all valid ninja targets
+        ninja -C build-cov -t targets > all_targets.txt
+
+        TARGETS=""
+
+        for FILE in $MODIFIED_FILES; do
+          # Skip core support files from direct target mapping (tested transitively)
+          if [[ "$FILE" == *"__support/"* ]]; then
+            echo "[LOG] -> Support file ($FILE) will be tested transitively."
+            continue
           fi
 
-          echo "DIFF_BASE=$DIFF_BASE" >> $GITHUB_ENV
-          echo "BASE_SHA=$BASE_SHA" >> $GITHUB_ENV
-          echo "HEAD_SHA=$HEAD_SHA" >> $GITHUB_ENV
-          echo "BASE_REF=$BASE_REF" >> $GITHUB_ENV
-          echo "HEAD_REF=$HEAD_REF" >> $GITHUB_ENV
-          echo "BASE_REPO=$BASE_REPO" >> $GITHUB_ENV
-          echo "HEAD_REPO=$HEAD_REPO" >> $GITHUB_ENV
+          if [[ "$FILE" =~ ^libc/src/([^/]+)/(.*/)?([^/]+)\.cpp$ ]]; then
+            DIR="${BASH_REMATCH[1]}"
+            SUBDIR="${BASH_REMATCH[2]}"
+            NAME="${BASH_REMATCH[3]}"
 
-          MODIFIED_FILES=$(git diff --name-only "$DIFF_BASE" HEAD -- libc/src/ || true)
-          echo "[LOG] Modified files in libc/src/:"
-          echo "$MODIFIED_FILES"
-
-          if [ -z "$MODIFIED_FILES" ]; then
-            echo "[LOG] No source files modified in libc/src/. Exiting successfully."
-            echo "TARGETS=" >> $GITHUB_ENV
-
-            echo "## LLVM-libc Patch MC/DC Coverage Report" > coverage_report.md
-            echo "" >> coverage_report.md
-            echo "- **Base Branch:** [\`${BASE_REF}\` (${BASE_SHA:0:7})](https://github.com/${BASE_REPO}/commit/${BASE_SHA})" >> coverage_report.md
-            echo "- **Head Commit:** [\`${HEAD_REF}\` (${HEAD_SHA:0:7})](https://github.com/${HEAD_REPO}/commit/${HEAD_SHA})" >> coverage_report.md
-            echo "---" >> coverage_report.md
-            echo "" >> coverage_report.md
-            echo "> [!NOTE]" >> coverage_report.md
-            echo "> ### Coverage Validated" >> coverage_report.md
-            echo "> No \`.cpp\` source files in \`libc/src/\` were modified in this patch." >> coverage_report.md
-
-            cat coverage_report.md >> $GITHUB_STEP_SUMMARY
-            exit 0
-          fi
-
-          ninja -C build-cov -t targets > all_targets.txt
-
-          TARGETS=""
-
-          for FILE in $MODIFIED_FILES; do
-            if [[ "$FILE" == *"__support/"* ]]; then
-              echo "[LOG] -> Support file ($FILE) will be tested transitively."
-              continue
+            # Construct targeted ninja unit test target matching LLVM-libc naming convention
+            CANDIDATE=""
+            if [ -n "$SUBDIR" ]; then
+              SUBDIR_CLEAN=$(echo "$SUBDIR" | tr '/' '.')
+              CANDIDATE="libc.test.src.${DIR}.${SUBDIR_CLEAN}${NAME}_test.__unit__"
+            else
+              CANDIDATE="libc.test.src.${DIR}.${NAME}_test.__unit__"
             fi
 
-            if [[ "$FILE" =~ ^libc/src/([^/]+)/(.*/)?([^/]+)\.cpp$ ]]; then
-              DIR="${BASH_REMATCH[1]}"
-              SUBDIR="${BASH_REMATCH[2]}"
-              NAME="${BASH_REMATCH[3]}"
+            CANDIDATE_NO_PREFIX="libc.test.src.${DIR}.${NAME}__unit__"
 
-              CANDIDATE=""
-              if [ -n "$SUBDIR" ]; then
-                SUBDIR_CLEAN=$(echo "$SUBDIR" | tr '/' '.')
-                CANDIDATE="libc.test.src.${DIR}.${SUBDIR_CLEAN}${NAME}_test.__unit__"
-              else
-                CANDIDATE="libc.test.src.${DIR}.${NAME}_test.__unit__"
-              fi
+            if grep -Fxq "$CANDIDATE: phony" all_targets.txt; then
+              echo "[LOG] -> Mapped $FILE to target: $CANDIDATE"
+              TARGETS="$TARGETS $CANDIDATE"
+            elif grep -Fxq "$CANDIDATE_NO_PREFIX: phony" all_targets.txt; then
+              echo "[LOG] -> Mapped $FILE to target: $CANDIDATE_NO_PREFIX"
+              TARGETS="$TARGETS $CANDIDATE_NO_PREFIX"
+            else
+              echo "[WARNING] No direct unit test target matching $CANDIDATE found for $FILE"
+            fi
+          fi
+        done
 
-              CANDIDATE_NO_PREFIX="libc.test.src.${DIR}.${NAME}__unit__"
+        TARGETS=$(echo "$TARGETS" | xargs)
+        echo "TARGETS=$TARGETS" >> $GITHUB_ENV
 
-              if grep -Fxq "$CANDIDATE: phony" all_targets.txt; then
-                echo "[LOG] -> Mapped $FILE to target: $CANDIDATE"
-                TARGETS="$TARGETS $CANDIDATE"
-              elif grep -Fxq "$CANDIDATE_NO_PREFIX: phony" all_targets.txt; then
-                echo "[LOG] -> Mapped $FILE to target: $CANDIDATE_NO_PREFIX"
-                TARGETS="$TARGETS $CANDIDATE_NO_PREFIX"
-              else
-                echo "[WARNING] No direct unit test target matching $CANDIDATE found for $FILE"
-              fi
+        if [ -n "$TARGETS" ]; then
+          echo "[LOG] Building and executing targets: $TARGETS"
+          ninja -C build-cov $TARGETS
+        else
+          echo "[LOG] No direct entrypoint unit tests mapped. Building default core targets."
+          ninja -C build-cov libc.test.src.string.memchr_test.__unit__ || true
+        fi
+
+        END_TIME=$(date +%s)
+        echo "=== [STAGE 2/4] Targeted Tests Completed in $((END_TIME - START_TIME))s ==="
+
+    - name: Generate Patch MC/DC Coverage Report
+      run: |
+        echo "=== [STAGE 3/4] Generating Coverage Report at $(date -u '+%Y-%m-%d %H:%M:%S UTC') ==="
+        START_TIME=$(date +%s)
+
+        # Merge raw profile data from executed unit tests
+        if [ ! -f build-cov/bin/libc_full.profdata ] && [ -n "$(ls build-cov/bin/*.profraw 2>/dev/null)" ]; then
+          /usr/lib/llvm-23/bin/llvm-profdata merge -sparse build-cov/bin/*.profraw -o build-cov/bin/libc_full.profdata
+        fi
+
+        # Find all generated test binaries
+        TEST_BINARIES=$(find build-cov/bin -type f -executable -name "libc.test.*" | tr '\n' ' ')
+
+        if [ -z "$TEST_BINARIES" ] || [ ! -f build-cov/bin/libc_full.profdata ]; then
+          echo "[LOG] No test binaries or profile data found. Emitting empty diff summary."
+          git diff "$DIFF_BASE" HEAD > patch.diff
+          echo '{"data":[{"files":[]}]}' > coverage.json
+        else
+          OBJECT_FLAGS=""
+          FIRST=true
+          for BIN in $TEST_BINARIES; do
+            if [ "$FIRST" = true ]; then
+              OBJECT_FLAGS="$BIN"
+              FIRST=false
+            else
+              OBJECT_FLAGS="$OBJECT_FLAGS -object $BIN"
             fi
           done
 
-          TARGETS=$(echo "$TARGETS" | xargs)
-          echo "TARGETS=$TARGETS" >> $GITHUB_ENV
+          # Export coverage data via llvm-cov
+          /usr/lib/llvm-23/bin/llvm-cov export \
+            $OBJECT_FLAGS \
+            -instr-profile=build-cov/bin/libc_full.profdata \
+            -ignore-filename-regex="build-cov/|llvm-project/|libc/test/|libc/utils/" > coverage.json
 
-          if [ -n "$TARGETS" ]; then
-            echo "[LOG] Building and executing targets with MC/DC: $TARGETS"
-            ninja -C build-cov $TARGETS
-          else
-            echo "[LOG] No direct entrypoint unit tests mapped. Building default core targets."
-            ninja -C build-cov libc.test.src.string.memchr_test.__unit__ || true
-          fi
+          git diff "$DIFF_BASE" HEAD > patch.diff
+        fi
 
-          END_TIME=$(date +%s)
-          echo "=== [STAGE 2/4] Targeted Tests Completed in $((END_TIME - START_TIME))s ==="
+        # Run Patch Coverage Analyzer
+        python3 libc/utils/coverage/patch_report.py \
+          patch.diff \
+          coverage.json \
+          "$BASE_SHA" \
+          "$HEAD_SHA" \
+          "$BASE_REF" \
+          "$HEAD_REF" \
+          "$TARGETS" \
+          "$BASE_REPO" \
+          "$HEAD_REPO" > coverage_report.md
 
-      - name: Generate Patch MC/DC Coverage Report
-        run: |
-          echo "=== [STAGE 3/4] Generating MC/DC Coverage Report at $(date -u '+%Y-%m-%d %H:%M:%S UTC') ==="
-          START_TIME=$(date +%s)
+        cat coverage_report.md >> $GITHUB_STEP_SUMMARY
 
-          if [ ! -f build-cov/bin/libc_full.profdata ] && [ -n "$(ls build-cov/bin/*.profraw 2>/dev/null)" ]; then
-            /usr/lib/llvm-23/bin/llvm-profdata merge -sparse build-cov/bin/*.profraw -o build-cov/bin/libc_full.profdata
-          fi
+        END_TIME=$(date +%s)
+        echo "=== [STAGE 3/4] Coverage Report Completed in $((END_TIME - START_TIME))s ==="
 
-          TEST_BINARIES=$(find build-cov/bin -type f -executable -name "libc.test.*" | tr '\n' ' ')
+    - name: Post or Update PR Comment
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const report = fs.readFileSync('coverage_report.md', 'utf8');
+          const botHeader = '## LLVM-libc Patch Coverage Report';
 
-          if [ -z "$TEST_BINARIES" ] || [ ! -f build-cov/bin/libc_full.profdata ]; then
-            echo "[LOG] No test binaries or profile data found. Emitting empty diff summary."
-            git diff "$DIFF_BASE" HEAD > patch.diff
-            echo '{"data":[{"files":[]}]}' > coverage.json
-          else
-            OBJECT_FLAGS=""
-            FIRST=true
-            for BIN in $TEST_BINARIES; do
-              if [ "$FIRST" = true ]; then
-                OBJECT_FLAGS="$BIN"
-                FIRST=false
-              else
-                OBJECT_FLAGS="$OBJECT_FLAGS -object $BIN"
-              fi
-            done
+          const { data: comments } = await github.rest.issues.listComments({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number,
+          });
 
-            /usr/lib/llvm-23/bin/llvm-cov export \
-              $OBJECT_FLAGS \
-              -instr-profile=build-cov/bin/libc_full.profdata \
-              -ignore-filename-regex="build-cov/|llvm-project/|libc/test/|libc/utils/" > coverage.json
+          const existingComment = comments.find(comment => 
+            comment.user.type === 'Bot' && comment.body.includes(botHeader)
+          );
 
-            git diff "$DIFF_BASE" HEAD > patch.diff
-          fi
-
-          python3 libc/utils/coverage/patch_report.py \
-            patch.diff \
-            coverage.json \
-            "$BASE_SHA" \
-            "$HEAD_SHA" \
-            "$BASE_REF" \
-            "$HEAD_REF" \
-            "$TARGETS" \
-            "$BASE_REPO" \
-            "$HEAD_REPO" > coverage_report.md
-
-          cat coverage_report.md >> $GITHUB_STEP_SUMMARY
-
-          END_TIME=$(date +%s)
-          echo "=== [STAGE 3/4] MC/DC Report Completed in $((END_TIME - START_TIME))s ==="
-
-      - name: Post or Update PR Comment
-        if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            const report = fs.readFileSync('coverage_report.md', 'utf8');
-            const botHeader = '## LLVM-libc Patch Coverage Report';
-
-            const { data: comments } = await github.rest.issues.listComments({
+          if (existingComment) {
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: existingComment.id,
+              body: report
+            });
+          } else {
+            await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
+              body: report
             });
-
-            const existingComment = comments.find(comment => 
-              comment.user.type === 'Bot' && comment.body.includes(botHeader)
-            );
-
-            if (existingComment) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: existingComment.id,
-                body: report
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                body: report
-              });
-            }
+          }
