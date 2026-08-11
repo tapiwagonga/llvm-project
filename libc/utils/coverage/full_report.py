@@ -59,7 +59,6 @@ def render_full_report(cov_data: dict) -> None:
         mcdc_tot = mcdc_summary.get("count", 0)
         mcdc_cov = mcdc_summary.get("covered", 0)
 
-        # Count decisions and fully verified decisions from mcdc_records
         mcdc_records = item.get("mcdc_records", [])
         file_decisions_tot = len(mcdc_records)
         file_decisions_full = 0
@@ -135,77 +134,56 @@ def render_full_report(cov_data: dict) -> None:
     else:
         mcdc_pages_url = pages_url
 
-    header_title = (
-        "## LLVM-libc Full Codebase MC/DC Health Report"
-        if has_mcdc
-        else "## LLVM-libc Full Codebase Coverage Report"
-    )
+    print("## LLVM-libc Full Codebase Coverage Report\n")
 
-    print(f"{header_title}\n")
-
+    print("> [!NOTE]")
     if has_mcdc:
-        print("> [!NOTE]")
         print(
-            f"> ### Codebase Logic Health: **{mcdc_pct:.2f}% MC/DC** | **{line_pct:.2f}% Line Coverage**"
+            f"> ### Overall Codebase Coverage: **{line_pct:.2f}% Line** | **{mcdc_pct:.2f}% MC/DC**"
         )
         print(
-            f"> Evaluated **{total_lines_cov:,} / {total_lines_tot:,}** executable lines and **{total_mcdc_cov:,} / {total_mcdc_tot:,}** boolean conditions across **{total_decisions_count:,}** decision(s) in LLVM-libc."
+            f"> Tested **{total_lines_cov:,} / {total_lines_tot:,}** executable lines and **{total_mcdc_cov:,} / {total_mcdc_tot:,}** boolean conditions across **{total_decisions_count:,}** decisions."
         )
         print("")
         print(
-            f"- **Interactive Truth Tables & Drill-Down:** [{mcdc_pages_url}]({mcdc_pages_url})"
+            f"- **Coverage Dashboard:** [{mcdc_pages_url}]({mcdc_pages_url})"
         )
     else:
-        print("> [!NOTE]")
         print(f"> ### Overall Codebase Coverage: **{line_pct:.2f}%**")
         print(
-            f"> Successfully tested **{total_lines_cov:,} / {total_lines_tot:,}** executable lines across all LLVM-libc subsystems."
+            f"> Tested **{total_lines_cov:,} / {total_lines_tot:,}** executable lines across all LLVM-libc subsystems."
         )
         print("")
         print(f"- **Coverage Dashboard:** [{pages_url}]({pages_url})")
 
     print("\n---\n")
 
-    print("### Codebase Health Metrics")
-    print("| Metric Category | Covered | Total | Coverage % | Status |")
-    print("| :--- | :---: | :---: | :---: | :---: |")
+    print("### Codebase Metrics")
+    print("| Metric | Covered | Total | Coverage % |")
+    print("| :--- | :---: | :---: | :---: |")
     if has_mcdc:
-        mcdc_health_status = (
-            "High Assurance" if mcdc_pct >= 80.0 else "Action Recommended"
-        )
-        dec_status = (
-            f"{total_decisions_count - total_decisions_full:,} Partial Decisions"
-            if total_decisions_count > total_decisions_full
-            else "Complete"
+        print(
+            f"| **MC/DC Condition Independence** | {total_mcdc_cov:,} | {total_mcdc_tot:,} | **{mcdc_pct:.2f}%** |"
         )
         print(
-            f"| **MC/DC Condition Independence** | {total_mcdc_cov:,} | {total_mcdc_tot:,} | **{mcdc_pct:.2f}%** | {mcdc_health_status} |"
-        )
-        print(
-            f"| **Fully Verified Decisions** | {total_decisions_full:,} | {total_decisions_count:,} | **{decisions_pct:.2f}%** | {dec_status} |"
+            f"| **Fully Verified Decisions** | {total_decisions_full:,} | {total_decisions_count:,} | **{decisions_pct:.2f}%** |"
         )
     print(
-        f"| **Executable Line Coverage** | {total_lines_cov:,} | {total_lines_tot:,} | **{line_pct:.2f}%** | Robust |"
+        f"| **Executable Lines** | {total_lines_cov:,} | {total_lines_tot:,} | **{line_pct:.2f}%** |"
     )
     print(
-        f"| **Function Entrypoint Coverage** | {total_func_cov:,} | {total_func_tot:,} | **{func_pct:.2f}%** | Excellent |"
+        f"| **Functions** | {total_func_cov:,} | {total_func_tot:,} | **{func_pct:.2f}%** |"
     )
     print("")
 
-    # Subsystem Breakdown Table (Sorted by risk if MC/DC enabled)
-    print("### Subsystem Safety Risk Breakdown")
+    print("### Subsystem Coverage Breakdown")
     if has_mcdc:
         print(
-            "| Subsystem | MC/DC Coverage | Decisions (Full/Tot) | Line Coverage | Unverified Conditions | Safety Priority |"
+            "| Subsystem | MC/DC Conditions | Decisions (Full/Tot) | Line Coverage | Function Coverage | Executable Lines | Missed Lines |"
         )
-        print("| :--- | :---: | :---: | :---: | :---: | :---: |")
+        print("| :--- | :---: | :---: | :---: | :---: | :---: | :---: |")
 
-        def risk_key(sub_name: str) -> Tuple[int, str]:
-            data = subsystems[sub_name]
-            unverified = data["mcdc_tot"] - data["mcdc_cov"]
-            return (-unverified, sub_name)
-
-        sorted_subsystems = sorted(subsystems.keys(), key=risk_key)
+        sorted_subsystems = sorted(subsystems.keys())
     else:
         print(
             "| Subsystem | Line Coverage | Function Coverage | Executable Lines | Missed Lines |"
@@ -233,7 +211,6 @@ def render_full_report(cov_data: dict) -> None:
                 if data["mcdc_tot"] > 0
                 else 0
             )
-            unverified_conds = data["mcdc_tot"] - data["mcdc_cov"]
             mc_cell = (
                 f"**{s_mc_pct:.1f}%** ({data['mcdc_cov']}/{data['mcdc_tot']})"
                 if data["mcdc_tot"] > 0
@@ -244,21 +221,8 @@ def render_full_report(cov_data: dict) -> None:
                 if data["decisions_tot"] > 0
                 else "—"
             )
-            unverified_cell = (
-                f"**{unverified_conds}**" if unverified_conds > 0 else "0"
-            )
-
-            if unverified_conds > 50:
-                priority = "Priority 1 (High Logic Density)"
-            elif unverified_conds > 10:
-                priority = "Priority 2 (Moderate)"
-            elif unverified_conds > 0:
-                priority = "Priority 3 (Low Gap)"
-            else:
-                priority = "Verified (Complete)"
-
             print(
-                f"| `libc/{sub}` | {mc_cell} | {dec_cell} | **{s_line_pct:.2f}%** | {unverified_cell} | {priority} |"
+                f"| `libc/{sub}` | {mc_cell} | {dec_cell} | **{s_line_pct:.2f}%** | {s_func_pct:.2f}% | {data['lines_tot']:,} | {missed_lines:,} |"
             )
         else:
             print(

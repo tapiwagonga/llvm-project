@@ -142,8 +142,7 @@ class TestLineRangeFormatter(unittest.TestCase):
 
 
 class TestPatchReportRendering(unittest.TestCase):
-    def test_render_state_a_linear_pass(self):
-        # State A: 100% lines covered, 0 compound decisions
+    def test_render_linear_pass(self):
         diff_text = """diff --git a/libc/src/string/memchr.cpp b/libc/src/string/memchr.cpp
 --- a/libc/src/string/memchr.cpp
 +++ b/libc/src/string/memchr.cpp
@@ -175,10 +174,8 @@ class TestPatchReportRendering(unittest.TestCase):
 
         self.assertIn("## LLVM-libc Patch Coverage Report", output)
         self.assertIn("100.00%", output)
-        self.assertIn("No compound boolean decisions in patch", output)
 
-    def test_render_state_b_gold_standard_mcdc(self):
-        # State B: 100% lines covered + 100% MC/DC
+    def test_render_full_mcdc(self):
         diff_text = """diff --git a/libc/src/string/memchr.cpp b/libc/src/string/memchr.cpp
 --- a/libc/src/string/memchr.cpp
 +++ b/libc/src/string/memchr.cpp
@@ -216,13 +213,11 @@ class TestPatchReportRendering(unittest.TestCase):
             )
         output = f.getvalue()
 
-        self.assertIn("## LLVM-libc Patch MC/DC & Logic Assurance Report", output)
-        self.assertIn("Full Safety Assurance", output)
+        self.assertIn("## LLVM-libc Patch Coverage Report", output)
         self.assertIn("100.00% MC/DC", output)
-        self.assertIn("Decisions Fully Verified", output)
+        self.assertIn("Fully Verified Decisions", output)
 
-    def test_render_state_c_partial_mcdc(self):
-        # State C: 100% lines covered + Partial MC/DC (Condition unverified)
+    def test_render_partial_mcdc(self):
         diff_text = """diff --git a/libc/src/string/memchr.cpp b/libc/src/string/memchr.cpp
 --- a/libc/src/string/memchr.cpp
 +++ b/libc/src/string/memchr.cpp
@@ -260,15 +255,13 @@ class TestPatchReportRendering(unittest.TestCase):
             )
         output = f.getvalue()
 
-        self.assertIn("## LLVM-libc Patch MC/DC & Logic Assurance Report", output)
-        self.assertIn("33.3% MC/DC Coverage", output)
-        self.assertIn("PARTIAL", output)
+        self.assertIn("33.3% MC/DC", output)
         self.assertIn("C2, C3 unverified", output)
 
 
 class TestFullReportRendering(unittest.TestCase):
     @patch.dict(os.environ, {"GITHUB_REPOSITORY": "llvm/llvm-project"}, clear=True)
-    def test_render_full_report_with_mcdc_risk_ranking(self):
+    def test_render_full_report_streamlined(self):
         cov_data = {
             "data": [
                 {
@@ -277,12 +270,11 @@ class TestFullReportRendering(unittest.TestCase):
                             "filename": "/root/llvm-project/libc/src/string/memchr.cpp",
                             "mcdc_records": [
                                 [10, 1, 10, 20, 1, 1, 0, 0, 5, [True, True]],
-                                [15, 1, 15, 20, 1, 1, 0, 0, 5, [True, False, False]],
                             ],
                             "summary": {
                                 "lines": {"count": 10, "covered": 10, "percent": 100.0},
                                 "functions": {"count": 1, "covered": 1, "percent": 100.0},
-                                "mcdc": {"count": 5, "covered": 3, "notcovered": 2, "percent": 60.0},
+                                "mcdc": {"count": 2, "covered": 2, "notcovered": 0, "percent": 100.0},
                             },
                         },
                         {
@@ -306,10 +298,12 @@ class TestFullReportRendering(unittest.TestCase):
             render_full_report(cov_data)
         output = f.getvalue()
 
-        self.assertIn("## LLVM-libc Full Codebase MC/DC Health Report", output)
-        self.assertIn("Codebase Logic Health", output)
-        self.assertIn("https://llvm.github.io/llvm-project/mcdc/", output)
-        self.assertIn("Subsystem Safety Risk Breakdown", output)
+        self.assertIn("## LLVM-libc Full Codebase Coverage Report", output)
+        self.assertIn("Codebase Metrics", output)
+        self.assertIn("Subsystem Coverage Breakdown", output)
+        self.assertNotIn("Status", output)
+        self.assertNotIn("Health", output)
+        self.assertNotIn("Safety Priority", output)
 
 
 if __name__ == "__main__":

@@ -258,7 +258,7 @@ def render_patch_report(
                 if decision["covered"] == decision["total"]:
                     fully_verified_decisions += 1
                     condition_diagnostics.append(
-                        f"`L{d_start}`: **{decision['covered']}/{decision['total']} conditions verified** (Complete)"
+                        f"`L{d_start}`: **{decision['covered']}/{decision['total']} verified**"
                     )
                 else:
                     uncovered_idx = [
@@ -278,14 +278,9 @@ def render_patch_report(
     total_lines = total_covered + total_missed
     has_mcdc = total_mcdc_tot > 0
 
-    header_title = (
-        "## LLVM-libc Patch MC/DC & Logic Assurance Report"
-        if has_mcdc
-        else "## LLVM-libc Patch Coverage Report"
-    )
+    print("## LLVM-libc Patch Coverage Report\n")
 
     if total_lines == 0 or not active_files:
-        print(f"{header_title}\n")
         if base_sha and head_sha and base_branch and head_branch:
             print(
                 f"- **Base Branch:** [`{base_branch}` ({base_sha[:7]})](https://github.com/{base_repo}/commit/{base_sha})"
@@ -299,46 +294,39 @@ def render_patch_report(
         print("> No `.cpp` source files in `libc/src/` were modified in this patch.")
         return
 
-    print(f"{header_title}\n")
-
     coverage_percent = (total_covered / total_lines) * 100
     mcdc_percent = (total_mcdc_cov / total_mcdc_tot * 100) if has_mcdc else 0.0
 
-    # 4-State UI Alert Card Hierarchy
     if total_missed == 0:
         if not has_mcdc:
-            # State A: Simple linear code, 100% line coverage
             print("> [!TIP]")
-            print(f"> ### Patch Coverage: **{coverage_percent:.2f}%** (PASSED)")
+            print(f"> ### Patch Coverage: **{coverage_percent:.2f}%**")
             print(
-                f"> All **{total_lines}** newly added or modified executable lines are covered by targeted unit tests. *(No compound boolean decisions in patch)*"
+                f"> All **{total_lines}** newly added or modified executable lines are covered."
             )
         elif total_mcdc_cov == total_mcdc_tot:
-            # State B: Gold standard (100% line + 100% MC/DC)
             print("> [!TIP]")
             print(
-                f"> ### Full Safety Assurance: **{coverage_percent:.2f}% Line** | **100.00% MC/DC** (PASSED)"
+                f"> ### Patch Coverage: **{coverage_percent:.2f}% Line** | **100.00% MC/DC**"
             )
             print(
-                f"> All **{total_lines}** executable lines and **{total_mcdc_tot}** boolean condition(s) across **{total_decisions_count}** decision(s) are fully verified with independent test vectors."
+                f"> All **{total_lines}** executable lines and **{total_mcdc_tot}** boolean conditions across **{total_decisions_count}** decisions are covered."
             )
         else:
-            # State C: 100% line coverage but partial MC/DC
             print("> [!NOTE]")
             print(
-                f"> ### Safety Assurance: **{mcdc_percent:.1f}% MC/DC Coverage** (PARTIAL)"
+                f"> ### Patch Coverage: **{coverage_percent:.2f}% Line** | **{mcdc_percent:.1f}% MC/DC**"
             )
             print(
-                f"> All **{total_lines}** executable lines were executed (100.00% Line Coverage), but **{total_mcdc_tot - total_mcdc_cov} of {total_mcdc_tot}** boolean sub-conditions were not independently verified."
+                f"> All **{total_lines}** executable lines were executed, and **{total_mcdc_cov} of {total_mcdc_tot}** boolean conditions achieved independence."
             )
     else:
-        # State D: Unexecuted lines (<100% line coverage)
         print("> [!WARNING]")
         print(
-            f"> ### Action Required: **{coverage_percent:.2f}% Patch Coverage** ({total_missed} Missed Lines)"
+            f"> ### Patch Coverage: **{coverage_percent:.2f}%** ({total_missed} Missed Lines)"
         )
         print(
-            f"> **{total_missed}** unexecuted line(s) detected in your patch. Please review the unexecuted line spans below."
+            f"> **{total_missed}** unexecuted lines detected in patch."
         )
     print("")
 
@@ -358,42 +346,29 @@ def render_patch_report(
     print("\n---\n")
 
     # Executive Summary Table
-    line_status = "**PASSED**" if total_missed == 0 else "**ACTION REQUIRED**"
     commit_link = (
         f"[`{head_sha[:7]}`](https://github.com/{head_repo}/commit/{head_sha})"
         if head_sha
         else "HEAD"
     )
 
-    print("### Executive Safety Summary")
+    print("### Executive Summary")
     print(
-        f"The code coverage on the recent commit {commit_link} is **{coverage_percent:.2f}%**."
+        f"Patch coverage on commit {commit_link} is **{coverage_percent:.2f}%**."
     )
     print("")
-    print("| Metric | Measured Value | Target / Status |")
-    print("| :--- | :---: | :---: |")
+    print("| Metric | Value |")
+    print("| :--- | :---: |")
     if has_mcdc:
-        mcdc_status = (
-            "**PASSED**"
-            if total_mcdc_cov == total_mcdc_tot
-            else "**PARTIAL**"
-        )
-        decisions_status = (
-            "**Complete**"
-            if fully_verified_decisions == total_decisions_count
-            else "Action Recommended"
+        print(
+            f"| **MC/DC Condition Independence** | **{mcdc_percent:.2f}%** ({total_mcdc_cov}/{total_mcdc_tot} conditions) |"
         )
         print(
-            f"| **MC/DC Condition Independence** | **{mcdc_percent:.2f}%** ({total_mcdc_cov}/{total_mcdc_tot} conds) | {mcdc_status} |"
+            f"| **Fully Verified Decisions** | **{fully_verified_decisions} / {total_decisions_count}** |"
         )
-        print(
-            f"| **Decisions Fully Verified** | **{fully_verified_decisions} / {total_decisions_count}** ({(fully_verified_decisions/total_decisions_count*100) if total_decisions_count > 0 else 0:.1f}%) | {decisions_status} |"
-        )
-    print(f"| **Patch Line Coverage** | **{coverage_percent:.2f}%** | {line_status} |")
-    print(f"| **Executable Lines Evaluated** | **{total_lines}** | — |")
-    print(f"| **Covered Lines** | **{total_covered}** | {coverage_percent:.1f}% |")
+    print(f"| **Patch Line Coverage** | **{coverage_percent:.2f}%** ({total_covered}/{total_lines} lines) |")
     print(
-        f"| **Unexecuted Lines** | **{total_missed}** | {'0' if total_missed == 0 else str(total_missed)} |"
+        f"| **Unexecuted Lines** | **{total_missed}** |"
     )
     print("")
 
