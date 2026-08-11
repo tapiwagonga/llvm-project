@@ -91,6 +91,19 @@ endif()
 set(LIBC_LINK_OPTIONS_DEFAULT "" CACHE STRING "Arguments used when linking.")
 set(LIBC_TEST_LINK_OPTIONS_DEFAULT "" CACHE STRING "Common link options for all the tests.")
 
+option(LLVM_LIBC_ENABLE_COVERAGE "Build libc with coverage instrumentation" OFF)
+if(LLVM_LIBC_ENABLE_COVERAGE)
+  list(APPEND LIBC_COMPILE_OPTIONS_DEFAULT "-fprofile-instr-generate" "-fcoverage-mapping")
+  list(APPEND LIBC_TEST_COMPILE_OPTIONS_DEFAULT "-fprofile-instr-generate" "-fcoverage-mapping")
+  list(APPEND LIBC_TEST_LINK_OPTIONS_DEFAULT "-fprofile-instr-generate" "-fcoverage-mapping")
+
+  option(LIBC_ENABLE_MCDC "Enable Modified Condition/Decision Coverage (MC/DC)" OFF)
+  if(LIBC_ENABLE_MCDC)
+    list(APPEND LIBC_COMPILE_OPTIONS_DEFAULT "-fcoverage-mcdc")
+    list(APPEND LIBC_TEST_COMPILE_OPTIONS_DEFAULT "-fcoverage-mcdc")
+  endif()
+endif()
+
 set(LIBC_TEST_CMD "" CACHE STRING
   "The full test command in the form <command> binary=@BINARY@, if using another program to test (e.g. QEMU)")
 set(LIBC_TEST_HERMETIC_ONLY "" OFF CACHE BOOL "Only enable hermetic tests.")
