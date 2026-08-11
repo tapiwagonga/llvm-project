@@ -399,7 +399,7 @@ def render_patch_report(
                 f_mc_pct = f_mc_cov / f_mc_tot * 100
                 mcdc_cell = f"**{f_mc_pct:.1f}%** ({f_mc_cov}/{f_mc_tot})"
             else:
-                mcdc_cell = "—"
+                mcdc_cell = "N/A"
 
             diag_parts = []
             if line_spans != "None":

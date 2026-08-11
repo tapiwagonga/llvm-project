@@ -214,12 +214,12 @@ def render_full_report(cov_data: dict) -> None:
             mc_cell = (
                 f"**{s_mc_pct:.1f}%** ({data['mcdc_cov']}/{data['mcdc_tot']})"
                 if data["mcdc_tot"] > 0
-                else "—"
+                else "N/A"
             )
             dec_cell = (
                 f"{data['decisions_full']} / {data['decisions_tot']}"
                 if data["decisions_tot"] > 0
-                else "—"
+                else "N/A"
             )
             print(
                 f"| `libc/{sub}` | {mc_cell} | {dec_cell} | **{s_line_pct:.2f}%** | {s_func_pct:.2f}% | {data['lines_tot']:,} | {missed_lines:,} |"
