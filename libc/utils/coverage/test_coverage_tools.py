@@ -213,7 +213,7 @@ class TestPatchReportRendering(unittest.TestCase):
             )
         output = f.getvalue()
 
-        self.assertIn("## LLVM-libc Patch Coverage Report", output)
+        self.assertIn("## LLVM-libc MC/DC Patch Coverage Report", output)
         self.assertIn("100.00% MC/DC", output)
         self.assertIn("Decisions (Verified / Total)", output)
 

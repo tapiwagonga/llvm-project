@@ -294,7 +294,10 @@ def render_patch_report(
     total_lines = total_covered + total_missed
     has_mcdc = total_mcdc_tot > 0
 
-    print("## LLVM-libc Patch Coverage Report\n")
+    if has_mcdc:
+        print("## LLVM-libc MC/DC Patch Coverage Report\n")
+    else:
+        print("## LLVM-libc Patch Coverage Report\n")
 
     if total_lines == 0 or not active_files:
         if base_sha and head_sha and base_branch and head_branch:
