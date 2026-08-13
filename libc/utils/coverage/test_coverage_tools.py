@@ -299,8 +299,8 @@ class TestFullReportRendering(unittest.TestCase):
         output = f.getvalue()
 
         self.assertIn("## LLVM-libc Full Codebase Coverage Report", output)
-        self.assertIn("Codebase Metrics", output)
-        self.assertIn("Subsystem Coverage Breakdown", output)
+        self.assertIn("Overall", output)
+        self.assertIn("Coverage Breakdown", output)
         self.assertNotIn("Status", output)
         self.assertNotIn("Health", output)
         self.assertNotIn("Safety Priority", output)

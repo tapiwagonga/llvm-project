@@ -158,7 +158,7 @@ def render_full_report(cov_data: dict) -> None:
 
     print("\n---\n")
 
-    print("### Codebase Metrics")
+    print("### Overall")
     print("| Metric | Covered | Total | Coverage % |")
     print("| :--- | :---: | :---: | :---: |")
     if has_mcdc:
@@ -176,7 +176,7 @@ def render_full_report(cov_data: dict) -> None:
     )
     print("")
 
-    print("### Subsystem Coverage Breakdown")
+    print("### Coverage Breakdown")
     if has_mcdc:
         print(
             "| Subsystem | MC/DC Conditions | Decisions (Full/Tot) | Line Coverage | Function Coverage | Executable Lines | Missed Lines |"
