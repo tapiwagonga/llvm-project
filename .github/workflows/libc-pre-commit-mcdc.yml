@@ -123,8 +123,17 @@ jobs:
           HEAD_REPO="${PR_HEAD_REPO:-$REPO_NAME}"
           git fetch upstream "$BASE_SHA" --depth=1 2>/dev/null || git fetch origin "$BASE_SHA" --depth=1 2>/dev/null || git fetch origin "$BASE_REF" --depth=1 2>/dev/null || true
           DIFF_BASE="$BASE_SHA"
+        elif [ "$BRANCH_REF" != "main" ]; then
+          # For feature branches, compare against main merge-base
+          git fetch origin main --depth=100 2>/dev/null || true
+          BASE_SHA=$(git merge-base origin/main HEAD 2>/dev/null || git rev-parse HEAD~1 2>/dev/null || echo "HEAD~1")
+          HEAD_SHA="$COMMIT_SHA"
+          BASE_REF="main"
+          HEAD_REF="$BRANCH_REF"
+          BASE_REPO="llvm/llvm-project"
+          HEAD_REPO="$REPO_NAME"
+          DIFF_BASE="$BASE_SHA"
         else
-          # For direct pushes, compare the pushed commit against its parent (HEAD~1)
           BASE_SHA=$(git rev-parse HEAD~1 2>/dev/null || echo "HEAD~1")
           HEAD_SHA="$COMMIT_SHA"
           BASE_REF="main"
