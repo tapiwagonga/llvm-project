@@ -215,7 +215,7 @@ class TestPatchReportRendering(unittest.TestCase):
 
         self.assertIn("## LLVM-libc Patch Coverage Report", output)
         self.assertIn("100.00% MC/DC", output)
-        self.assertIn("Fully Verified Decisions", output)
+        self.assertIn("Decisions (Verified / Total)", output)
 
     def test_render_partial_mcdc(self):
         diff_text = """diff --git a/libc/src/string/memchr.cpp b/libc/src/string/memchr.cpp

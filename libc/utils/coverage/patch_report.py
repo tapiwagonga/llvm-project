@@ -245,7 +245,10 @@ def render_patch_report(
         # Evaluate MC/DC decisions on modified lines
         f_mcdc_cov = 0
         f_mcdc_tot = 0
+        f_dec_ver = 0
+        f_dec_tot = 0
         condition_diagnostics = []
+        unverified_decision_lines: Dict[int, List[str]] = {}
 
         for decision in data.get("mcdc_decisions", []):
             d_start = decision["line_start"]
@@ -253,12 +256,14 @@ def render_patch_report(
             # Check if any modified line overlaps this decision range
             if any(d_start <= l <= d_end for l in added_lines):
                 total_decisions_count += 1
+                f_dec_tot += 1
                 f_mcdc_cov += decision["covered"]
                 f_mcdc_tot += decision["total"]
                 if decision["covered"] == decision["total"]:
                     fully_verified_decisions += 1
+                    f_dec_ver += 1
                     condition_diagnostics.append(
-                        f"`L{d_start}`: **{decision['covered']}/{decision['total']} verified**"
+                        f"`L{d_start}`: {decision['covered']}/{decision['total']} verified"
                     )
                 else:
                     uncovered_idx = [
@@ -266,14 +271,25 @@ def render_patch_report(
                         for i, is_cov in enumerate(decision["conditions"])
                         if not is_cov
                     ]
+                    unverified_str = ", ".join(uncovered_idx)
                     condition_diagnostics.append(
-                        f"`L{d_start}`: **{decision['covered']}/{decision['total']} verified** ({', '.join(uncovered_idx)} unverified)"
+                        f"`L{d_start}`: {decision['covered']}/{decision['total']} verified ({unverified_str} unverified)"
                     )
+                    for l in range(d_start, d_end + 1):
+                        if l in added_lines:
+                            unverified_decision_lines[l] = uncovered_idx
 
-        if f_mcdc_tot > 0:
+        if f_mcdc_tot > 0 or f_dec_tot > 0:
             total_mcdc_cov += f_mcdc_cov
             total_mcdc_tot += f_mcdc_tot
-            file_mcdc_data[fpath] = (f_mcdc_cov, f_mcdc_tot, condition_diagnostics)
+            file_mcdc_data[fpath] = (
+                f_mcdc_cov,
+                f_mcdc_tot,
+                condition_diagnostics,
+                f_dec_ver,
+                f_dec_tot,
+                unverified_decision_lines,
+            )
 
     total_lines = total_covered + total_missed
     has_mcdc = total_mcdc_tot > 0
@@ -318,7 +334,7 @@ def render_patch_report(
                 f"> ### Patch Coverage: **{coverage_percent:.2f}% Line** | **{mcdc_percent:.1f}% MC/DC**"
             )
             print(
-                f"> All **{total_lines}** executable lines were executed, and **{total_mcdc_cov} of {total_mcdc_tot}** boolean conditions achieved independence."
+                f"> Executed **{total_covered} / {total_lines}** lines. **{total_mcdc_cov} / {total_mcdc_tot}** boolean conditions achieved independence across **{fully_verified_decisions} / {total_decisions_count}** decisions."
             )
     else:
         print("> [!WARNING]")
@@ -345,40 +361,13 @@ def render_patch_report(
         print(f"- **Targeted Tests Executed:** {targets_formatted}")
     print("\n---\n")
 
-    # Executive Summary Table
-    commit_link = (
-        f"[`{head_sha[:7]}`](https://github.com/{head_repo}/commit/{head_sha})"
-        if head_sha
-        else "HEAD"
-    )
-
-    print("### Executive Summary")
-    print(
-        f"Patch coverage on commit {commit_link} is **{coverage_percent:.2f}%**."
-    )
-    print("")
-    print("| Metric | Value |")
-    print("| :--- | :---: |")
+    # Unified Coverage Breakdown Table
+    print("### Coverage Breakdown")
     if has_mcdc:
         print(
-            f"| **MC/DC Condition Independence** | **{mcdc_percent:.2f}%** ({total_mcdc_cov}/{total_mcdc_tot} conditions) |"
+            "| Modified Source File | Line Coverage | MC/DC Conditions | Decisions (Verified / Total) | Missed Lines | Unverified Conditions |"
         )
-        print(
-            f"| **Fully Verified Decisions** | **{fully_verified_decisions} / {total_decisions_count}** |"
-        )
-    print(f"| **Patch Line Coverage** | **{coverage_percent:.2f}%** ({total_covered}/{total_lines} lines) |")
-    print(
-        f"| **Unexecuted Lines** | **{total_missed}** |"
-    )
-    print("")
-
-    # Modified Files & Decision Diagnostics Table
-    print("### Modified Files & Decision Diagnostics")
-    if has_mcdc:
-        print(
-            "| Modified Source File | Line Coverage | MC/DC Decision Coverage | Missed Lines | Condition Diagnostics & Spans |"
-        )
-        print("| :--- | :---: | :---: | :---: | :--- |")
+        print("| :--- | :---: | :---: | :---: | :---: | :--- |")
     else:
         print(
             "| Modified Source File | Patch Coverage | Covered / Total | Missed Lines | Unexecuted Line Spans |"
@@ -392,8 +381,13 @@ def render_patch_report(
         file_link = f"[`{fpath}`](https://github.com/{head_repo}/blob/{head_sha or 'main'}/{fpath})"
 
         if has_mcdc:
-            f_mc_cov, f_mc_tot, diag_list = file_mcdc_data.get(
-                fpath, (0, 0, [])
+            f_mc_data = file_mcdc_data.get(fpath, (0, 0, [], 0, 0, {}))
+            f_mc_cov, f_mc_tot, diag_list, f_dec_ver, f_dec_tot = (
+                f_mc_data[0],
+                f_mc_data[1],
+                f_mc_data[2],
+                f_mc_data[3],
+                f_mc_data[4],
             )
             if f_mc_tot > 0:
                 f_mc_pct = f_mc_cov / f_mc_tot * 100
@@ -401,21 +395,29 @@ def render_patch_report(
             else:
                 mcdc_cell = "N/A"
 
-            diag_parts = []
-            if line_spans != "None":
-                diag_parts.append(f"Missed lines: {line_spans}")
-            if diag_list:
-                diag_parts.extend(diag_list)
-
-            diag_cell = "<br>".join(diag_parts) if diag_parts else "None"
+            dec_cell = (
+                f"**{f_dec_ver} / {f_dec_tot}**" if f_dec_tot > 0 else "N/A"
+            )
+            diag_cell = "<br>".join(diag_list) if diag_list else "None"
 
             print(
-                f"| {file_link} | **{f_pct:.2f}%** ({len(f_covered)}/{f_total}) | {mcdc_cell} | {len(f_missed)} | {diag_cell} |"
+                f"| {file_link} | **{f_pct:.2f}%** ({len(f_covered)}/{f_total}) | {mcdc_cell} | {dec_cell} | {len(f_missed)} | {diag_cell} |"
             )
         else:
             print(
                 f"| {file_link} | **{f_pct:.2f}%** | {len(f_covered)} / {f_total} | {len(f_missed)} | {line_spans} |"
             )
+
+    # Summary Row
+    if has_mcdc:
+        total_dec_cell = f"**{fully_verified_decisions} / {total_decisions_count}**"
+        print(
+            f"| **Total (Patch)** | **{coverage_percent:.2f}%** ({total_covered}/{total_lines}) | **{mcdc_percent:.1f}%** ({total_mcdc_cov}/{total_mcdc_tot}) | {total_dec_cell} | **{total_missed}** | - |"
+        )
+    else:
+        print(
+            f"| **Total (Patch)** | **{coverage_percent:.2f}%** | {total_covered} / {total_lines} | **{total_missed}** | - |"
+        )
     print("")
 
     # Collapsible Source Map Diff
@@ -424,6 +426,9 @@ def render_patch_report(
 
     for fpath, (f_covered, f_missed, added_lines) in active_files.items():
         hunks = diff_files.get(fpath, [])
+        f_mc_data = file_mcdc_data.get(fpath, (0, 0, [], 0, 0, {}))
+        unverified_lines = f_mc_data[5] if len(f_mc_data) > 5 else {}
+
         print(f"#### `{fpath}`")
         print("```diff")
         for hunk in hunks:
@@ -431,7 +436,10 @@ def render_patch_report(
             for l_type, text, l_num in hunk.lines:
                 if l_type == "+":
                     if l_num in f_missed:
-                        print(f"- {text}")
+                        print(f"- {text}  // [MISSED]")
+                    elif l_num in unverified_lines:
+                        unverified_conds = ", ".join(unverified_lines[l_num])
+                        print(f"! {text}  // [PARTIAL MC/DC: {unverified_conds} unverified]")
                     elif l_num in f_covered:
                         print(f"+ {text}")
                     else:
