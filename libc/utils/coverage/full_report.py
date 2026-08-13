@@ -179,7 +179,7 @@ def render_full_report(cov_data: dict) -> None:
     print("### Coverage Breakdown")
     if has_mcdc:
         print(
-            "| Subsystem | MC/DC Conditions | Decisions (Full/Tot) | Line Coverage | Function Coverage | Executable Lines | Missed Lines |"
+            "| Subsystem | MC/DC Conditions | Decisions (Verified / Total) | Line Coverage | Function Coverage | Executable Lines | Missed Lines |"
         )
         print("| :--- | :---: | :---: | :---: | :---: | :---: | :---: |")
 

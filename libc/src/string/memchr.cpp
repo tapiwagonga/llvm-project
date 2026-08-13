@@ -16,13 +16,24 @@
 
 namespace LIBC_NAMESPACE_DECL {
 
-// TODO: Look at performance benefits of comparing words.
 LLVM_LIBC_FUNCTION(void *, memchr, (const void *src, int c, size_t n)) {
-  if (n)
-    LIBC_CRASH_ON_NULLPTR(src);
-  return internal::find_first_character(
-      reinterpret_cast<const unsigned char *>(src),
-      static_cast<unsigned char>(c), n);
+  if (n == 0 || src == nullptr)
+    return nullptr;
+
+  const unsigned char *p = reinterpret_cast<const unsigned char *>(src);
+  const unsigned char target = static_cast<unsigned char>(c);
+
+  size_t i = 0;
+  while (i < n && p[i] != target) {
+    if (i + 1 < n && p[i + 1] == target)
+      return const_cast<unsigned char *>(p + i + 1);
+    i += (i + 1 < n) ? 2 : 1;
+  }
+
+  if (i < n && p[i] == target)
+    return const_cast<unsigned char *>(p + i);
+
+  return nullptr;
 }
 
 } // namespace LIBC_NAMESPACE_DECL

@@ -15,6 +15,17 @@
 namespace LIBC_NAMESPACE_DECL {
 
 LLVM_LIBC_FUNCTION(size_t, strcspn, (const char *src, const char *segment)) {
+  if (src == nullptr || segment == nullptr || *src == '\0')
+    return 0;
+
+  if (segment[0] != '\0' && segment[1] == '\0') {
+    const char target = segment[0];
+    size_t count = 0;
+    while (src[count] != '\0' && src[count] != target)
+      ++count;
+    return count;
+  }
+
   return internal::complementary_span(src, segment);
 }
 
