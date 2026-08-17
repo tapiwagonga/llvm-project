@@ -4,18 +4,19 @@ permissions:
   contents: write
 
 on:
-  # Daily overnight run at 02:00 UTC
+  # Daily overnight run at 02:30 UTC (staggered by 30 mins from baseline sweep)
   schedule:
-    - cron: '0 2 * * *'
+    - cron: '30 2 * * *'
 
   # Allow manual on-demand execution from GitHub Actions UI ("Run workflow" button)
   workflow_dispatch:
 
-  # Trigger on pushes to main / libc-mcdc-coverage
+  # Trigger on pushes to main / libc-mcdc-coverage / post-commit-bot
   push:
     branches:
       - main
       - libc-mcdc-coverage
+      - post-commit-bot
     paths:
       - 'libc/**'
       - '.github/workflows/libc-post-commit-mcdc.yml'
