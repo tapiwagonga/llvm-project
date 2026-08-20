@@ -142,5 +142,6 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./coverage_mcdc_html
           destination_dir: mcdc
+          keep_files: true
           enable_jekyll: false
           force_orphan: false
