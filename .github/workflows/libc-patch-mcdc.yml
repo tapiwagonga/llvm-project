@@ -1,8 +1,8 @@
-name: libc pre-commit mcdc code coverage
+name: Libc Patch MC/DC Coverage
 
 permissions:
   contents: read
-  pull-requests: write # Required to post/update pre-commit coverage comments
+  pull-requests: write # Required to post/update patch coverage comments
 
 on:
   workflow_dispatch:
@@ -16,7 +16,7 @@ on:
       - 'libc/include/**'
       - 'libc/test/**'
       - 'libc/CMakeLists.txt'
-      - '.github/workflows/libc-pre-commit-mcdc.yml'
+      - '.github/workflows/libc-patch-mcdc.yml'
       - '!libc/docs/**'
       - '!libc/benchmarks/**'
       - '!libc/fuzzing/**'
@@ -28,7 +28,7 @@ on:
       - 'libc/include/**'
       - 'libc/test/**'
       - 'libc/CMakeLists.txt'
-      - '.github/workflows/libc-pre-commit-mcdc.yml'
+      - '.github/workflows/libc-patch-mcdc.yml'
       - '!libc/docs/**'
       - '!libc/benchmarks/**'
       - '!libc/fuzzing/**'

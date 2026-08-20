@@ -1,4 +1,4 @@
-name: "Libc Post-Commit MC/DC Coverage Bot"
+name: Libc Full Codebase MC/DC Coverage
 
 permissions:
   contents: write
@@ -19,7 +19,7 @@ on:
       - post-commit-bot
     paths:
       - 'libc/**'
-      - '.github/workflows/libc-post-commit-mcdc.yml'
+      - '.github/workflows/libc-full-mcdc.yml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -130,13 +130,6 @@ jobs:
           # 3. Run Full Coverage Analyzer
           python3 libc/utils/coverage/full_report.py coverage.json "$COMMIT_SHA" "$BRANCH_REF" >> $GITHUB_STEP_SUMMARY
           echo "[LOG] Post-commit summary report written to GITHUB_STEP_SUMMARY."
-
-      - name: Upload MC/DC HTML Coverage Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: libc-mcdc-coverage-html-report
-          path: ./coverage_mcdc_html
-          retention-days: 14
 
       - name: Deploy MC/DC Dashboard to GitHub Pages
         if: github.repository != 'llvm/llvm-project'
