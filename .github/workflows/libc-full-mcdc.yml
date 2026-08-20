@@ -3,6 +3,9 @@ name: Libc Full Codebase MC/DC Coverage
 permissions:
   contents: write
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 on:
   # Daily overnight run at 02:30 UTC (staggered by 30 mins from baseline sweep)
   schedule:
