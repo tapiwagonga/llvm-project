@@ -134,14 +134,40 @@ jobs:
           python3 libc/utils/coverage/full_report.py coverage.json "$COMMIT_SHA" "$BRANCH_REF" >> $GITHUB_STEP_SUMMARY
           echo "[LOG] Post-commit summary report written to GITHUB_STEP_SUMMARY."
 
-      - name: Deploy MC/DC Dashboard to GitHub Pages
+          # 4. Fetch History and Run Coverage Tracker
+          mkdir -p data gh-pages-root
+          curl -s -f "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/data/history.json" -o data/history.json || echo "[]" > data/history.json
+
+          python3 libc/utils/coverage/coverage_tracker.py \
+            --export-json coverage.json \
+            --history-file data/history.json \
+            --out-dir gh-pages-root \
+            --issue-file issue_body.md \
+            --commit-sha "$COMMIT_SHA"
+
+          # 5. Copy MC/DC HTML into output root for deployment
+          mkdir -p gh-pages-root/mcdc
+          cp -r coverage_mcdc_html/* gh-pages-root/mcdc/
+          touch gh-pages-root/.nojekyll
+
+      - name: Update Pinned GitHub Tracking Issue
+        if: github.repository != 'llvm/llvm-project'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TRACKING_ISSUE_ID: 1
+        run: |
+          gh issue edit "$TRACKING_ISSUE_ID" --body-file issue_body.md 2>/dev/null || echo "[LOG] Notice: Pinned issue update skipped."
+
+      - name: Deploy Coverage Dashboard and Reports to GitHub Pages
         if: github.repository != 'llvm/llvm-project'
         continue-on-error: true
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./coverage_mcdc_html
-          destination_dir: mcdc
+          publish_dir: ./gh-pages-root
+          destination_dir: .
           keep_files: true
           enable_jekyll: false
           force_orphan: false
+
